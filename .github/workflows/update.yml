@@ -2,7 +2,7 @@ name: Krypto Dashboard Update
 
 on:
   schedule:
-    - cron: "7 */4 * * *"
+    - cron: "7 * * * *"
   workflow_dispatch:
   push:
     branches: [main]
