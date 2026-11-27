@@ -907,26 +907,24 @@ def overall_at(ct, mode, scores):
     return np.clip(50 + (avg - 50) * OVERALL_K[mode], 0, 100)
 
 
+# Fest hinterlegte Hochs und Tiefs der Bitcoin-Vier-Jahres-Zyklen (Tageshoch/-tief, Binance bzw. Bitstamp vor 2017)
+BTC_CYCLE = [("2013-12-04", "H", 1163), ("2015-01-14", "T", 152),
+             ("2017-12-17", "H", 19798), ("2018-12-15", "T", 3156),
+             ("2021-11-10", "H", 69000), ("2022-11-21", "T", 15476),
+             ("2025-10-06", "H", 126200)]
+
+
 def btc_cycle_points(btc_daily):
-    """Hochs und Tiefs der klassischen Vier-Jahres-Zyklen, bestimmt aus dem Bitcoin-Tageschart."""
-    if btc_daily is None or len(btc_daily) < 200:
-        return []
-    t, h, l, c = (btc_daily[k].values for k in ("t", "h", "l", "c"))
-    now = time.time()
-    hv = [int(datetime.strptime(x, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()) for x in HALVINGS]
-    pts = []
-    for a, b in zip(hv[:-1], hv[1:]):
-        idx = np.where((t >= a) & (t < b))[0]
-        if len(idx) < 60:
-            continue
-        ih = idx[np.argmax(h[idx])]
-        done = b <= now
-        top_ok = done or c[-1] <= 0.7 * h[ih]
-        pts.append([int(t[ih]), "H", sig(h[ih]), bool(top_ok)])
-        after = idx[idx > ih]
+    """Feste Zyklus-Punkte. Das Tief nach dem letzten Hoch kommt erst dazu, wenn es sich in den Daten bestätigt
+    (Kurs seitdem mindestens +50 % und das Tief mindestens 180 Tage alt)."""
+    ts = lambda d: int(datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
+    pts = [[ts(d), k, p, True] for d, k, p in BTC_CYCLE]
+    if btc_daily is not None and len(btc_daily) > 30 and BTC_CYCLE[-1][1] == "H":
+        t, l, c = btc_daily["t"].values, btc_daily["l"].values, btc_daily["c"].values
+        after = np.where(t > ts(BTC_CYCLE[-1][0]))[0]
         if len(after):
             il = after[np.argmin(l[after])]
-            if done or (top_ok and c[-1] >= 1.5 * l[il] and now - t[il] > 180 * 86400):
+            if c[-1] >= 1.5 * l[il] and time.time() - t[il] > 180 * 86400:
                 pts.append([int(t[il]), "T", sig(l[il]), True])
     return pts
 
@@ -1309,6 +1307,13 @@ padding:1px 5px;border-radius:5px;white-space:nowrap;font-weight:700}
 .bub.sm{padding:3px 7px;font-size:11px}.bub.sm b{font-size:12px}
 .bub.mid{transform:translate(-50%,-50%);padding:3px 8px}
 @media (orientation:landscape) and (max-height:560px){ .opts{margin:0 4px 2px} }
+.bub i{position:absolute;right:3px;top:1px;font-style:normal;font-size:9px;opacity:.55}
+.bub.sm{padding-right:14px}
+.bub.grab{box-shadow:0 0 0 2px var(--acc),0 4px 14px #0008}
+.ctag{overflow:hidden;text-overflow:ellipsis;transform:none}
+.vl.cyc.T{border-left-color:#22d3ee}
+.ctag.T{background:#22d3eee6;color:#04212a}
+.chip.on[style*="--c"] span{color:#1a1405!important}
 </style>
 </head>
 <body>
@@ -1353,7 +1358,7 @@ padding:1px 5px;border-radius:5px;white-space:nowrap;font-weight:700}
     <div class="opts" id="opts">
       <button class="chip sm" id="tgPiv">Hochs/Tiefs</button>
       <span class="thr" id="thrw"><input type="range" id="thr" min="3" max="80" step="1"><b id="thrv"></b></span>
-      <button class="chip sm" id="tgCyc" style="--c:#eab308">₿-Zyklus</button>
+      <button class="chip sm" id="tgCyc" style="--c:#eab308">₿-Zyklus <span style="color:#eab308">▲</span><span style="color:#22d3ee">▼</span></button>
       <span class="lbl" style="margin-left:4px">Score:</span><div class="seg" id="zseg"><button data-z="tf">Zeitrahmen</button><button data-z="g">Gesamt</button></div>
     </div>
     <div class="mres" id="mres"></div>
@@ -1535,8 +1540,8 @@ function explain(){
   ⅔ bei ≤ ${SELLS[1]}, Rest bei ≤ ${SELLS[2]}. Eine neue Runde beginnt erst, wenn der Score wieder ${D.reset} erreicht – so gibt
   es pro Tief nur ein Kaufsignal.</p>${calTxt}
   <p><b>Ehrlichkeit:</b> Jede Kerze nutzt nur Daten bis zu dieser Kerze – alte Signale ändern sich nicht. Die gestrichelten
-  Hoch/Tief-Linien (Kursumkehr um mindestens die eingestellte Schwelle) und die goldenen ₿-Zyklus-Linien (höchstes und tiefstes
-  Bitcoin-Niveau je Halving-Zyklus) stehen erst im Nachhinein fest und zeigen nur, wie gut der Score getroffen hätte. Kein Indikator kann
+  Hoch/Tief-Linien (Kursumkehr um mindestens die eingestellte Schwelle) und die ₿-Zyklus-Linien (Hoch gold, Tief türkis) (höchstes und tiefstes
+  Bitcoin-Niveau je Halving-Zyklus, fest hinterlegt) stehen erst im Nachhinein fest und zeigen nur, wie gut der Score getroffen hätte. Kein Indikator kann
   Tiefs sicher vorhersagen. Keine Anlageberatung.</p>`;
   document.querySelectorAll('.expc').forEach(el => el.innerHTML = html);
 }
@@ -1912,15 +1917,30 @@ function drawPiv(){
       const y = G.cs.priceToCoordinate(p);
       if (y != null && x - lastX[k] > 58) {
         lastX[k] = x;
-        out.push(`<div class="ptag ${k}" style="left:${x}px;top:${k === 'H' ? y - 18 : y + 4}px">${price(p)}</div>`);
+        out.push(`<div class="ptag ${k}" style="left:${x}px;top:${Math.max(showCyc && D.btcc ? 62 : 0, k === 'H' ? y - 18 : y + 4)}px">${price(p)}</div>`);
       }
     }
   }
-  if (showCyc && D.btcc) for (const [t, k, p, ok] of D.btcc) {
-    const i = idxAt(t); if (i < 0) continue;
-    const x = ts.logicalToCoordinate(i); if (x == null || x < -2 || x > W) continue;
-    const d = new Date(t * 1000), lab = `₿-Zyklus-${k === 'H' ? 'Hoch' : 'Tief'} ${d.getMonth() + 1}/${d.getFullYear()}${ok ? '' : ' (bisher)'}`;
-    out.push(`<div class="vl cyc" style="left:${x}px"></div><div class="ctag" style="left:${x}px">${lab}<br>${price(p)}</div>`);
+  if (showCyc && D.btcc) {
+    const vis = [];
+    for (const [t, k, p, ok] of D.btcc) {
+      const i = idxAt(t); if (i < 0) continue;
+      const x = ts.logicalToCoordinate(i); if (x == null || x < -2 || x > W) continue;
+      vis.push({x, t, k, p, ok});
+    }
+    // Schilder versetzt in Reihen, damit sie sich nie überlappen; wird es zu eng, nur Kurzform
+    const ROWS = 3, rowEnd = new Array(ROWS).fill(-1e9);
+    const crowded = vis.length > 1 && Math.min(...vis.slice(1).map((v, j) => v.x - vis[j].x)) < 70;
+    for (const v of vis) {
+      const d = new Date(v.t * 1000), mm = `${d.getMonth() + 1}/${String(d.getFullYear()).slice(crowded ? 2 : 0)}`;
+      const txt = crowded ? `${v.k === 'H' ? '▲' : '▼'} ${mm}` : `₿-Zyklus-${v.k === 'H' ? 'Hoch' : 'Tief'} ${mm}<br>${price(v.p)}`;
+      const w = crowded ? 54 : 118, left = Math.min(v.x + 4, W - w - 2);
+      let row = rowEnd.findIndex(e => e < left - 4);
+      out.push(`<div class="vl cyc ${v.k}" style="left:${v.x}px"></div>`);
+      if (row < 0) continue;
+      rowEnd[row] = left + w;
+      out.push(`<div class="ctag ${v.k}" style="left:${left}px;top:${2 + row * (crowded ? 18 : 30)}px;width:${w}px" title="${price(v.p)}">${txt}</div>`);
+    }
   }
   el.innerHTML = out.join('');
 }
@@ -1965,10 +1985,10 @@ function drawM(){
         <div class="dot" style="left:${pa.x}px;top:${pa.y}px;background:#60a5fa"></div><div class="dot" style="left:${pb.x}px;top:${pb.y}px;background:${col}"></div>`;
     res = `<b style="color:${col}">${pct(pc_)}</b> (${dp >= 0 ? '+' : '−'}${price(Math.abs(dp))}) · ${bars} Kerzen · ${d}`;
     const H0 = $('ch0').clientHeight;
-    const tag = (q, P, c2) => { if (P.x == null || P.y == null) return '';
-      const above = P.y > 60, left = Math.min(Math.max(P.x, 64), W - 64);
-      return `<div class="bub sm" style="left:${left}px;top:${above ? P.y - 10 : P.y + 54}px;border-color:${c2}"><b>${price(q.p)}</b><br>${fmtDate(timeOf(q.l))}</div>`; };
-    html += tag(M.a, pa, '#60a5fa') + tag(B, pb, col);
+    const tag = (q, P, c2, role) => { if (P.x == null || P.y == null) return '';
+      const above = P.y > 60, left = Math.min(Math.max(P.x, 64), W - 64), act = M.drag === role ? ' grab' : '';
+      return `<div class="bub sm${act}" data-role="${role}" style="left:${left}px;top:${above ? P.y - 10 : P.y + 54}px;border-color:${c2}"><b>${price(q.p)}</b><br>${fmtDate(timeOf(q.l))}<i>✥</i></div>`; };
+    html += tag(M.a, pa, '#60a5fa', 'a') + tag(B, pb, col, 'b');
     if (pa.x != null && pb.x != null && pa.y != null && pb.y != null) {
       const cx = Math.min(Math.max((pa.x + pb.x) / 2, 70), W - 70), cy = Math.min(Math.max((pa.y + pb.y) / 2 + 14, 30), H0 - 10);
       html += `<div class="bub mid" style="left:${cx}px;top:${cy}px;border-color:${col}"><b style="color:${col}">${pct(pc_)}</b><br>${d}</div>`;
@@ -1987,20 +2007,36 @@ function bindTouch(){
       el.addEventListener('pointerdown', e => {
         if (!G) return; e.preventDefault(); cap(el, e);
         const q = pointAt(e); if (!q) return;
+        // Offene Messung: Blase (oder Punkt) greifen = diesen Messpunkt nachjustieren, der andere bleibt stehen
+        if (fingers.size === 0 && M && M.moved) {
+          const hit = [...document.querySelectorAll('#ml .bub[data-role]')].find(b => { const r = b.getBoundingClientRect();
+            return e.clientX >= r.left - 10 && e.clientX <= r.right + 10 && e.clientY >= r.top - 10 && e.clientY <= r.bottom + 10; });
+          const ts = G.pc.timeScale(), r0 = $('ch0').getBoundingClientRect();
+          const near = ['a', 'b'].find(k => { const x = ts.logicalToCoordinate(M[k].l), y = G.cs.priceToCoordinate(M[k].p);
+            return x != null && y != null && Math.hypot(e.clientX - r0.left - x, e.clientY - r0.top - y) < 26; });
+          const role = hit ? hit.dataset.role : near;
+          if (role) {
+            const x = ts.logicalToCoordinate(M[role].l), y = G.cs.priceToCoordinate(M[role].p);
+            M.off = {x: r0.left + x - e.clientX, y: r0.top + y - e.clientY};   // Punkt springt nicht unter den Finger
+            M.drag = role; fingers.set(e.pointerId, role); drawM(); return;
+          }
+        }
         if (fingers.size === 0 || !M) { fingers.clear(); fingers.set(e.pointerId, 'b'); M = {a: q, b: q, moved: false, x0: e.clientX, y0: e.clientY}; }
         else if (fingers.size === 1) { fingers.set(e.pointerId, 'a'); M.a = q; M.moved = true; }
         drawM();
       });
       el.addEventListener('pointermove', e => {
         if (!G) return;
-        const q = pointAt(e); if (!q) return;
         const role = fingers.get(e.pointerId);
+        const q = M && M.drag && role === M.drag && M.off ? pointAt({clientX: e.clientX + M.off.x, clientY: e.clientY + M.off.y}) : pointAt(e);
+        if (!q) return;
         if (!role) { if (e.pointerType === 'mouse' && fingers.size === 0) { M = {a: q, b: q, moved: false, hover: true}; drawM(); } return; }
         M[role] = q;
         if (!M.moved && Math.hypot(e.clientX - M.x0, e.clientY - M.y0) > 8) M.moved = true;
         drawM();
       });
-      ['pointerup', 'pointercancel'].forEach(ev => el.addEventListener(ev, e => fingers.delete(e.pointerId)));
+      ['pointerup', 'pointercancel'].forEach(ev => el.addEventListener(ev, e => { fingers.delete(e.pointerId);
+        if (M && M.drag && fingers.size === 0) { M.drag = null; M.off = null; drawM(); } }));
       el.addEventListener('pointerleave', () => { if (M && M.hover) { M = null; drawM(); $('mres').innerHTML = ''; } });
     } else {
       const mv = e => {
