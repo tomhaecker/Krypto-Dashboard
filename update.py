@@ -42,7 +42,7 @@ STAT_HORIZON = 10
 INDEX_COINS = 20
 CALIB_MAX_AGE_DAYS = 7
 CALIB_COINS = 40
-CALIB_VERSION = 8
+CALIB_VERSION = 9
 EXTEND_RANK = 60       # für Coins bis zu diesem Rang wird ältere Historie bei Bitfinex gesucht
 OUT_DIR = "site"
 
@@ -492,7 +492,8 @@ def load_macro():
         log(f"Fear & Greed: {len(s)} Tage")
     except Exception as e:
         log("Fear & Greed nicht abrufbar:", e)
-    for key, sources in (("dxy", [lambda: yahoo_daily("DX-Y.NYB"), lambda: fred_daily("DTWEXBGS")]),
+    for key, sources in (("eurusd", [lambda: fred_daily("DEXUSEU"), lambda: yahoo_daily("EURUSD=X")]),
+                         ("dxy", [lambda: yahoo_daily("DX-Y.NYB"), lambda: fred_daily("DTWEXBGS")]),
                          ("gold", [lambda: yahoo_daily("GC=F"),
                                    lambda: binance("https://data-api.binance.vision")("PAXG", "1d").set_index("t")["c"]])):
         for fn in sources:
@@ -823,6 +824,60 @@ def evaluate(items, cfg, mode):
                      "per_low": round(nb / max(lows, 1), 2), "obj": float(obj),
                      "cyc": float(np.mean(cbn) * 100) if cbn else None}
     return S, res
+
+
+def event_study(items, mode, base_weights):
+    """Ereignisstudie: Wie standen die einzelnen Indikatoren direkt VOR großen Anstiegen bzw. Rückgängen?
+    Nur Trainingsdaten. Indikatoren, die vorher zuverlässig richtig standen, bekommen mehr Gewicht."""
+    H = 20 if mode == "short" else 30
+    up, dn = {}, {}
+    n_up = n_dn = 0
+    for it in items:
+        C = it["C"]
+        c = C["c"]
+        n = len(c)
+        if n <= H + 50:
+            continue
+        fwd = np.full(n, np.nan)
+        fwd[:-H] = c[H:] / c[:-H] - 1
+        fwd[~it["train"]] = np.nan
+        ok = ~np.isnan(fwd)
+        if ok.sum() < 50:
+            continue
+        q_up, q_dn = np.nanquantile(fwd[ok], 0.9), np.nanquantile(fwd[ok], 0.1)
+
+        def starts(cond):
+            idx, last = [], -10 ** 9
+            for i in np.where(cond)[0]:
+                if i - last >= H:
+                    idx.append(i)
+                    last = i
+            return np.array(idx, dtype=int)
+        # Für die Messung zählen ALLE Kerzen vor einem großen Anstieg/Rückgang (oberstes/unterstes Zehntel). Würde man
+        # nur den „Beginn“ jedes Anstiegs nehmen, wäre dieser Punkt mit Blick in die Zukunft ausgewählt und läge
+        # automatisch an einem kleinen Tief – das würde Vorlauf vortäuschen.
+        iu, idn = np.where(ok & (fwd >= q_up))[0], np.where(ok & (fwd <= q_dn))[0]
+        n_up += len(starts(ok & (fwd >= q_up)))
+        n_dn += len(starts(ok & (fwd <= q_dn)))
+        for col in C["subs"].columns:
+            if GROUP_OF.get(col) == "Zyklus":
+                continue
+            v = C["subs"][col].values
+            up.setdefault(col, []).extend(v[iu].tolist())
+            dn.setdefault(col, []).extend(v[idn].tolist())
+    seps, weights = {}, dict(base_weights)
+    for col in up:
+        a, b = np.array(up[col], float), np.array(dn[col], float)
+        a, b = a[~np.isnan(a)], b[~np.isnan(b)]
+        if len(a) < 10 or len(b) < 10:
+            continue
+        sd = np.sqrt((a.var() + b.var()) / 2) + 1e-9
+        sep = float((a.mean() - b.mean()) / sd)
+        seps[col] = round(sep, 3)
+        weights[col] = round(base_weights.get(col, 1.0) * float(np.clip(1 + 2 * sep, 0.25, 2.5)), 3)
+    log(f"Ereignisstudie {mode}: {n_up} Anstiege, {n_dn} Rückgänge; beste Vorläufer: "
+        + ", ".join(f"{k} {v:+.2f}" for k, v in sorted(seps.items(), key=lambda x: -x[1])[:4]))
+    return weights, seps, {"up": n_up, "dn": n_dn, "H": H}
 
 
 def calibrate(items, mode):
@@ -1190,49 +1245,69 @@ def run(coins_loader=load_coins, macro_loader=load_macro, html=None):
     if calib is None:
         calib = {"v": CALIB_VERSION, "date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "modes": {}}
         for mode, M in MODES.items():
-            items = []
-            gi = {tf: with_groups(C, M["weights"]) for tf, C in idx_C.items()}
             cal_tfs = ("1d", "1w") if mode == "long" else ("4h", "1d")
             cyc_ts = np.array([int(datetime.strptime(d_, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
                                for d_, k_, p_ in BTC_CYCLE])
             cyc_k = np.array([k_ for d_, k_, p_ in BTC_CYCLE])
-            for cc in comps[:CALIB_COINS]:
-                g = {tf: with_groups(C, M["weights"]) for tf, C in cc.items() if tf in ("4h", "1d", "1w", "1M")}
-                for tf in cal_tfs:
-                    if tf not in g:
-                        continue
-                    C = g[tf]
-                    H = g.get(HTF[tf])
-                    Mi = gi.get(tf)
-                    n = len(C["c"])
-                    train = np.zeros(n, bool)
-                    train[:int(n * 0.7)] = True
-                    hi, lo = pivot_idx(C["h"], C["l"], M["pivN"])
-                    it = {"C": C, "H": H, "hidx": htf_map(C, H) if H else None,
-                          "M": Mi, "midx": exact_index(Mi["t"], C["t"]) if Mi else None,
-                          "train": train, "test": ~train, "lo": {M["pivN"]: lo}, "hi": {M["pivN"]: hi}}
-                    if mode == "long":
-                        tt = C["t"]
-                        inside = (cyc_ts >= tt[0]) & (cyc_ts <= tt[-1])
-                        pos = np.searchsorted(tt, cyc_ts, side="right") - 1
-                        NC = max(4, int(round(30 * 86400 / TF_SEC[tf])))
-                        it["cyc"] = (pos[inside & (cyc_k == "T")], pos[inside & (cyc_k == "H")], NC)
-                    items.append(it)
-            if items:
-                calib["modes"][mode] = calibrate(items, mode)
-            else:
-                calib["modes"][mode] = {"cfg": M["default"], "S": 2.0, "res": None, "default": None, "adopted": False}
+
+            def build_items(W):
+                items = []
+                gi = {tf: with_groups(C, W) for tf, C in idx_C.items()}
+                for cc in comps[:CALIB_COINS]:
+                    g = {tf: with_groups(C, W) for tf, C in cc.items() if tf in ("4h", "1d", "1w", "1M")}
+                    for tf in cal_tfs:
+                        if tf not in g:
+                            continue
+                        C = g[tf]
+                        H = g.get(HTF[tf])
+                        Mi = gi.get(tf)
+                        n = len(C["c"])
+                        train = np.zeros(n, bool)
+                        train[:int(n * 0.7)] = True
+                        hi, lo = pivot_idx(C["h"], C["l"], M["pivN"])
+                        it = {"C": C, "H": H, "hidx": htf_map(C, H) if H else None,
+                              "M": Mi, "midx": exact_index(Mi["t"], C["t"]) if Mi else None,
+                              "train": train, "test": ~train, "lo": {M["pivN"]: lo}, "hi": {M["pivN"]: hi}}
+                        if mode == "long":
+                            tt = C["t"]
+                            inside = (cyc_ts >= tt[0]) & (cyc_ts <= tt[-1])
+                            pos = np.searchsorted(tt, cyc_ts, side="right") - 1
+                            NC = max(4, int(round(30 * 86400 / TF_SEC[tf])))
+                            it["cyc"] = (pos[inside & (cyc_k == "T")], pos[inside & (cyc_k == "H")], NC)
+                        items.append(it)
+                return items
+
+            items_base = build_items(M["weights"])
+            if not items_base:
+                calib["modes"][mode] = {"cfg": M["default"], "S": 2.0, "res": None, "default": None, "adopted": False,
+                                        "weights": M["weights"], "wset": "Standard"}
+                continue
+            ew, seps, ev = event_study(items_base, mode, M["weights"])
+            cb = calibrate(items_base, mode)
+            ce = calibrate(build_items(ew), mode)
+            # Ereignis-Gewichte nur übernehmen, wenn sie auch im unbekannten Testzeitraum mindestens gleich gut sind
+            ok_e = ce["res"] and cb["res"] and ce["res"]["test"]["obj"] >= cb["res"]["test"]["obj"] and ce["res"]["test"]["n"] >= 8
+            best = ce if ok_e else cb
+            best["weights"] = ew if ok_e else M["weights"]
+            best["wset"] = "Ereignisstudie" if ok_e else "Standard"
+            best["events"] = ev
+            best["seps"] = seps
+            best["ew"] = ew
+            best["base_test"] = cb["res"]["test"] if cb["res"] else None
+            log(f"Gewichte {mode}: {best['wset']}")
+            calib["modes"][mode] = best
     log(f"Kalibrierung fertig nach {time.time() - started:.0f}s")
 
     # 5) Endgültige Scores + Ausgabe
     mode_idx = {}
+    WM = {mode: calib["modes"][mode].get("weights") or M["weights"] for mode, M in MODES.items()}
     for mode, M in MODES.items():
         cfg = calib["modes"][mode]["cfg"]
-        mode_idx[mode] = {tf: combine(with_groups(C, M["weights"]), cfg)[0] for tf, C in idx_C.items()}
+        mode_idx[mode] = {tf: combine(with_groups(C, WM[mode]), cfg)[0] for tf, C in idx_C.items()}
     listing = []
     prepared = []
     for (meta, src, frames), cc in zip(loaded, comps):
-        gm = {mode: {tf: with_groups(C, M["weights"]) for tf, C in cc.items()} for mode, M in MODES.items()}
+        gm = {mode: {tf: with_groups(C, WM[mode]) for tf, C in cc.items()} for mode in MODES}
         bases = {mode: {tf: combine(C, calib["modes"][mode]["cfg"])[0] for tf, C in gm[mode].items()} for mode in MODES}
         per_tf = {tf: {} for tf in frames}
         extras = {tf: {} for tf in frames}
@@ -1326,14 +1401,20 @@ def run(coins_loader=load_coins, macro_loader=load_macro, html=None):
         mk["fng"] = [float(macro["fng"][0].iloc[-1]), macro.get("fng_label", "")]
     if "dxy" in macro:
         mk["dxy"] = round(float(macro["dxy"][0].iloc[-1]), 2)
+    fx = []
+    if "eurusd" in macro:
+        s = macro["eurusd"][0]
+        s = s[s.index >= 1262304000]            # ab 2010
+        fx = [[int(t) // 86400, round(float(v), 4)] for t, v in s.items()]
     if "global" in macro:
         mk.update(macro["global"])
     payload = {"updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                "buy": BUY_LEVEL, "sells": SELL_LEVELS, "reset": RESET_LEVEL, "h": STAT_HORIZON, "tfs": TIMEFRAMES,
                "ltfs": LIST_TFS, "info": IND_INFO, "go": GROUP_OF,
-               "modes": {m: {"label": M["label"], "pivN": M["pivN"], "w": M["weights"]} for m, M in MODES.items()},
+               "modes": {m: {"label": M["label"], "pivN": M["pivN"], "w": WM[m]} for m, M in MODES.items()},
+               "basew": {m: M["weights"] for m, M in MODES.items()},
                "cal": calib, "mkt": mk, "overall": OVERALL, "overall_k": OVERALL_K,
-               "btcc": btc_cycle_points(btc.get("1d") if btc else None), "coins": listing}
+               "btcc": btc_cycle_points(btc.get("1d") if btc else None), "fx": fx, "coins": listing}
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=float).replace("</", "<\\/")
     with open(os.path.join(OUT_DIR, "index.html"), "w", encoding="utf-8") as f:
         f.write(html.replace("__DATA__", data))
@@ -1531,6 +1612,16 @@ li.row.sel{outline:2px solid var(--acc)}
   #dmain .box,#dmain .note,#dmain .sec.exp,#dmain #allbox{grid-column:1/-1}
   .opts{gap:8px}
 }
+.simf{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.simf label{display:flex;flex-direction:column;font-size:11.5px;color:var(--mut);gap:3px}
+.simf input,.simf select,.trs select{background:var(--card2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 8px;font-size:14px;font-family:inherit}
+.trs{display:inline-flex;align-items:center;gap:4px;font-size:12px}
+.trs select{padding:3px 4px;font-size:12px}
+.tradew{max-height:420px;overflow:auto;margin-top:6px}
+#trades th{font-size:11px;color:var(--mut);text-align:left;padding:4px;position:sticky;top:0;background:var(--card)}
+#trades td{font-size:12px;padding:6px 4px;vertical-align:top}
+#trades small{color:var(--mut);font-size:10.5px}
+.evt td{font-size:11.5px;padding:3px 4px}
 </style>
 </head>
 <body>
@@ -1538,7 +1629,8 @@ li.row.sel{outline:2px solid var(--acc)}
   <div class="hrow"><h1>Krypto Score</h1><button class="fresh" id="ref"></button></div>
   <div class="mbar" id="mbar"></div>
   <input class="search" id="q" type="search" placeholder="Coin suchen (z. B. BTC, Solana)…" autocomplete="off">
-  <div class="chips"><span class="lbl">Modus:</span><div class="seg mseg"><button data-m="short">Kurzfristig</button><button data-m="long">Langfristig</button></div></div>
+  <div class="chips"><span class="lbl">Modus:</span><div class="seg mseg"><button data-m="short">Kurzfristig</button><button data-m="long">Langfristig</button></div>
+    <span class="lbl" style="margin-left:6px">Währung:</span><div class="seg cseg"><button data-c="USD">$</button><button data-c="EUR">€</button></div></div>
   <div class="chips" id="sort"><span class="lbl">Sortieren:</span>
     <button class="chip" data-o="mc">Marktkap.</button>
     <button class="chip" data-o="hi">Score hoch → tief</button>
@@ -1576,6 +1668,8 @@ li.row.sel{outline:2px solid var(--acc)}
       <button class="chip sm" id="tgPiv">Hochs/Tiefs</button>
       <span class="thr" id="thrw"><input type="range" id="thr" min="3" max="80" step="1"><b id="thrv"></b></span>
       <button class="chip sm" id="tgCyc" style="--c:#eab308">₿-Zyklus <span style="color:#eab308">▲</span><span style="color:#22d3ee">▼</span></button>
+      <span class="lbl">Tranchen:</span><span class="trs"><b class="up">Kauf</b><select id="nB"></select><b class="dn">Verk.</b><select id="nS"></select></span>
+      <div class="seg cseg"><button data-c="USD">$</button><button data-c="EUR">€</button></div>
       <span id="mas"></span>
       <span class="lbl" style="margin-left:4px">Score:</span><div class="seg" id="zseg"><button data-z="tf">Zeitrahmen</button><button data-z="g">Gesamt</button></div>
     </div>
@@ -1583,7 +1677,24 @@ li.row.sel{outline:2px solid var(--acc)}
     <div class="cwrap" id="cwrap"></div>
     <div class="msg" id="noz" style="display:none">Für diesen Zeitrahmen gibt es zu wenige Kerzen für einen eigenen Score – schalte auf „Gesamt“.</div>
   </div>
-  <div class="sec" id="statbox"><h4>Bilanz der Signale (gesamte Historie)</h4><div class="grid2" id="stat"></div><div class="grid4" id="stat2"></div></div>
+  <div class="sec" id="simbox"><h4>Simulation (Backtest) mit diesen Signalen</h4>
+    <div class="simf">
+      <label>Start<input type="date" id="simStart"></label>
+      <label>Budget<input type="number" id="simBudget" min="1" step="100"></label>
+      <label>Produkt<select id="simProd"><option value="spot">Spot (Krypto direkt)</option><option value="etp">ETP (z. B. Scalable)</option><option value="fut">Futures (z. B. Bitget)</option></select></label>
+      <label>Gebühr % pro Trade<input type="number" id="simFee" min="0" step="0.01"></label>
+      <label class="futonly">Hebel<input type="number" id="simLev" min="1" max="20" step="1"></label>
+      <label class="futonly">Finanzierung % p. a.<input type="number" id="simFund" min="0" step="0.5"></label>
+      <label class="spotonly">Pers. Steuersatz %<input type="number" id="simTaxP" min="0" max="60" step="0.5"></label>
+      <label class="spotonly">Freigrenze € / Jahr<input type="number" id="simFreeP" min="0" step="100"></label>
+      <label class="capOnly">Abgeltungsteuer %<input type="number" id="simTaxC" min="0" max="60" step="0.005"></label>
+      <label class="capOnly">Sparerpauschbetrag €<input type="number" id="simFreeC" min="0" step="100"></label>
+    </div>
+    <div class="grid3" id="simres" style="margin-top:10px"></div>
+    <p class="note" id="simnote" style="margin:8px 0 0"></p>
+    <details style="margin-top:8px"><summary>Trade-Übersicht</summary><div class="tradew"><table id="trades"></table></div></details>
+  </div>
+  <div class="sec" id="statbox"><h4>Bilanz der Signale (gesamte Historie, Standard-Tranchen)</h4><div class="grid2" id="stat"></div><div class="grid4" id="stat2"></div></div>
   <div class="sec" id="fbox"><h4>Filter &amp; Zyklen</h4><div class="grid2" id="filt"></div></div>
   <div class="sec" id="catbox"><h4>Bestandteile</h4><div class="grid3" id="cats"></div></div>
   <div class="sec" id="pcbox"><div class="grid2">
@@ -1615,6 +1726,15 @@ const $ = id => document.getElementById(id);
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
 let filter = 'all', query = '', ltf = store('ltf2') || 'g', ctf = store('ctf') || '4h', sortBy = store('sort') || 'mc';
 let mode = store('mode') === 'long' ? 'long' : 'short';
+let ccy = store('ccy') === 'EUR' ? 'EUR' : 'USD';
+let nB = Math.min(5, Math.max(1, +(store('nB') || 1))), nS = Math.min(5, Math.max(1, +(store('nS') || 3)));
+const buyLv = () => Array.from({length: nB}, (_, k) => 80 + k * (nB > 1 ? Math.min(5, 15 / (nB - 1)) : 0));
+const sellLv = () => Array.from({length: nS}, (_, k) => 30 - k * (nS > 1 ? Math.min(10, 25 / (nS - 1)) : 0));
+const FX = D.fx || [];
+function fxAt(t){ if (!FX.length) return null; const d = Math.floor(t / 86400); let lo = 0, hi = FX.length - 1;
+  if (d <= FX[0][0]) return FX[0][1]; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (FX[m][0] <= d) lo = m; else hi = m - 1; } return FX[lo][1]; }
+const fxNow = () => FX.length ? FX[FX.length - 1][1] : null;
+const toC = (usd, t) => { if (usd == null || ccy !== 'EUR') return usd; const f = t == null ? fxNow() : fxAt(t); return f ? usd / f : usd; };
 let mas = []; try { mas = JSON.parse(store('mas') || '[]') || []; } catch (e) { mas = []; }
 const MA = [['e20', 'EMA 20', '#60a5fa'], ['s50', 'SMA 50', '#f59e0b'], ['s200', 'SMA 200', '#a78bfa'], ['w200', '200W-Ø', '#f472b6']];
 let showPiv = store('piv') !== '0', showCyc = store('cyc') !== '0', zsel = store('zsel') === 'tf' ? 'tf' : 'g';
@@ -1630,8 +1750,10 @@ const label = s => s == null ? 'kein Score' : s >= BUY ? 'Kaufzone' : s >= 60 ? 
 function price(p){
   if (p == null || !isFinite(p)) return '–';
   const a = Math.abs(p), d = a >= 1000 ? 0 : a >= 1 ? 2 : a >= 0.01 ? 4 : 8;
-  return '$' + p.toLocaleString('de-DE', {minimumFractionDigits: d, maximumFractionDigits: d});
+  const s = p.toLocaleString('de-DE', {minimumFractionDigits: d, maximumFractionDigits: d});
+  return ccy === 'EUR' ? s + ' €' : '$' + s;
 }
+const money = p => p == null || !isFinite(p) ? '–' : (ccy === 'EUR' ? Math.round(p).toLocaleString('de-DE') + ' €' : '$' + Math.round(p).toLocaleString('de-DE'));
 const pct = x => x == null || !isFinite(x) ? '' : (x >= 0 ? '+' : '') + x.toFixed(2).replace('.', ',') + ' %';
 const num = x => x == null || !isFinite(x) ? '–' : Math.abs(x) >= 1000 ? Math.round(x).toLocaleString('de-DE') : String(+x.toPrecision(3)).replace('.', ',');
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -1652,16 +1774,17 @@ const landscape = () => window.matchMedia('(orientation: landscape) and (max-hei
 const desktop = () => window.matchMedia('(min-width: 1000px)').matches;
 
 // ---------------- Kopfzeile: Markt + Frische
-(function(){
+function mbar(){
   const m = D.mkt || {}, out = [];
   const fgc = v => v < 25 ? '#ef4444' : v < 45 ? '#f97316' : v <= 55 ? '#eab308' : v <= 75 ? '#84cc16' : '#22c55e';
   if (m.fng) out.push(`<div class="mb">Fear&Greed <b style="color:${fgc(m.fng[0])}">${Math.round(m.fng[0])}</b> ${esc(m.fng[1])}</div>`);
   if (m.dom != null) out.push(`<div class="mb">BTC-Dominanz <b>${m.dom.toFixed(1).replace('.', ',')} %</b></div>`);
-  if (m.mcap) out.push(`<div class="mb">Marktkap. <b>${(m.mcap / 1e12).toFixed(2).replace('.', ',')} Bio. $</b> <span class="${m.mcap_ch >= 0 ? 'up' : 'dn'}">${pct(m.mcap_ch)}</span></div>`);
+  if (m.mcap) out.push(`<div class="mb">Marktkap. <b>${(toC(m.mcap) / 1e12).toFixed(2).replace('.', ',')} Bio. ${ccy === 'EUR' ? '€' : '$'}</b> <span class="${m.mcap_ch >= 0 ? 'up' : 'dn'}">${pct(m.mcap_ch)}</span></div>`);
   if (m.dxy) out.push(`<div class="mb">DXY <b>${m.dxy.toFixed(1).replace('.', ',')}</b></div>`);
   $('mbar').innerHTML = out.join('');
   if (!out.length) $('mbar').style.display = 'none';
-})();
+}
+mbar();
 function freshness(){
   const t = Math.max(Date.parse(D.updated), liveTs), min = (Date.now() - t) / 60000;
   const txt = min < 1 ? 'gerade eben' : min < 60 ? `vor ${Math.round(min)} Min` : `vor ${Math.floor(min / 60)} Std ${Math.round(min % 60)} Min`;
@@ -1670,6 +1793,19 @@ function freshness(){
   $('ref2').innerHTML = `<i style="background:${col}"></i>${min < 1 ? 'jetzt' : min < 60 ? Math.round(min) + ' Min' : Math.floor(min / 60) + ' Std'} <span>⟳</span>`;
 }
 freshness(); setInterval(freshness, 15000);
+
+// ---------------- Währung und Tranchen
+function setCcy(c){
+  if (c === 'EUR' && !FX.length) { alert('Wechselkurse gerade nicht verfügbar.'); return; }
+  ccy = c; store('ccy', c);
+  document.querySelectorAll('.cseg button').forEach(b => b.classList.toggle('on', b.dataset.c === c));
+  mbar(); render(); if (cur && cur.data) show(true);
+}
+document.querySelectorAll('.cseg').forEach(s => s.addEventListener('click', e => { const b = e.target.closest('button'); if (b) setCcy(b.dataset.c); }));
+document.querySelectorAll('.cseg button').forEach(b => b.classList.toggle('on', b.dataset.c === ccy));
+['nB', 'nS'].forEach(id => { $(id).innerHTML = [1, 2, 3, 4, 5].map(k => `<option value="${k}">${k}</option>`).join('');
+  $(id).value = id === 'nB' ? nB : nS;
+  $(id).addEventListener('change', () => { if (id === 'nB') nB = +$(id).value; else nS = +$(id).value; store(id, $(id).value); explain(); if (cur && cur.data) show(true); }); });
 
 // ---------------- Modus
 function setMode(m){
@@ -1712,7 +1848,7 @@ function render(){
     const s = scoreOf(c), col = color(s);
     return `<li class="row" data-s="${esc(c.s)}"><div class="rk">#${c.r}</div>
       <div class="nm"><b>${esc(c.s)}</b><small>${esc(c.n)}</small>
-        <div class="px">${price(c.p)} <span class="${c.ch >= 0 ? 'up' : 'dn'}">${pct(c.ch)}</span> · ${label(s)}</div>
+        <div class="px">${price(toC(c.p))} <span class="${c.ch >= 0 ? 'up' : 'dn'}">${pct(c.ch)}</span> · ${label(s)}</div>
         <div class="bar"><i style="width:${s || 0}%;background:${col}"></i></div></div>
       <div class="kl"><div class="sc2${mode === 'short' ? ' act' : ''}" style="color:${color(c.g)};background:${color(c.g)}22"><small>K</small>${c.g == null ? '–' : Math.round(c.g)}</div>
         <div class="sc2${mode === 'long' ? ' act' : ''}" style="color:${color(c.gl)};background:${color(c.gl)}22"><small>L</small>${c.gl == null ? '–' : Math.round(c.gl)}</div></div></li>`;
@@ -1743,6 +1879,14 @@ function explain(){
     ${cal.adopted ? 'Die neue Einstellung war auch im Kontrollzeitraum besser.' : 'Im Kontrollzeitraum war keine Einstellung besser – es gilt der Standard.'}
     Kontrollzeitraum: <b>${r.test.n} Kaufsignale</b>, Nähe zum Tief <b>${Math.round(r.test.near)} %</b>
     (100 % = genau am Tief, 0 % = ${MD.pivN}+ Kerzen daneben), Gewinn nach ${D.h} Kerzen in <b>${Math.round(r.test.hit)} %</b> der Fälle${d0 ? ` (Standard: ${d0.test.n} Signale, Nähe ${Math.round(d0.test.near)} %)` : ''}.</p>` : '';
+  const ev = cal.events, seps = cal.seps || {}, ew = cal.ew || {};
+  const top = Object.entries(seps).sort((a, b) => b[1] - a[1]);
+  const evTxt = ev ? `<p><b>Ereignisstudie</b> (Vorlauf): In der Historie der Top-Coins wurden ${ev.up} große Anstiege und ${ev.dn} große
+    Rückgänge gesucht (oberstes bzw. unterstes Zehntel der Kursänderung über die nächsten ${ev.H} Kerzen, nur Trainingsdaten).
+    Für jeden Indikator wurde gemessen, wie deutlich er <i>vorher</i> richtig stand (Trennschärfe: 0 = kein Vorlauf, über 0,5 = deutlich).
+    Gute Vorläufer bekamen mehr Gewicht (höchstens das 2,5-Fache), schwache weniger. Verwendet: <b>${esc(cal.wset || 'Standard')}-Gewichte</b>
+    ${cal.wset === 'Ereignisstudie' ? '(waren im unbekannten Testzeitraum besser)' : '(die Ereignis-Gewichte waren im Testzeitraum nicht besser)'}.</p>
+    <table class="evt">${top.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="v"><span class="mini"><i style="width:${Math.min(100, Math.max(0, v) * 100)}%;background:${v > 0.3 ? 'var(--buy)' : v > 0 ? '#eab308' : 'var(--sell)'}"></i></span> ${v.toFixed(2).replace('.', ',')}</td><td class="v">× ${((ew[k] || 1) / ((D.basew[mode] || {})[k] || 1)).toFixed(2).replace('.', ',')}</td></tr>`).join('')}</table>` : '';
   const html = `
   <p><b>Modus ${esc(MD.label)}</b>: ${mode === 'long' ? 'sucht nur die großen Zyklus-Tiefs und -Hochs (echtes Hoch/Tief = Extrem über ±30 Kerzen), mit mehr Gewicht auf langfristigen Indikatoren und dem übergeordneten Zeitrahmen. Signale sind sehr selten.' : 'sucht die kleineren Tiefs und Hochs (Extrem über ±10 Kerzen) für kürzere Trades.'}</p>
   <p><b>Datenquellen:</b> Kerzen von Binance (Ersatz OKX/KuCoin). Ältere Historie: Bitcoin von Bitstamp (ab 2011) und
@@ -1765,9 +1909,9 @@ function explain(){
   <p><b>Gesamt-Score:</b> unabhängig vom gewählten Chart. ${mode === 'long' ? '1 T (30 %), 1 W (45 %), 1 M (25 %)' : '1 Std (25 %), 4 Std (40 %), 1 T (35 %)'} –
   jeweils nur die zuletzt abgeschlossene Kerze, damit sich nichts nachträglich ändert. Weil das Mitteln den Wert Richtung 50 drückt, wird er wieder auf die übliche Schwankungsbreite gespreizt (Faktor ${String((D.overall_k || {})[mode] ?? 1).slice(0, 4).replace('.', ',')}). Im Score-Fenster kannst du zwischen
   „Zeitrahmen“ und „Gesamt“ wechseln; die Pfeile im Chart folgen dem angezeigten Score.</p>
-  <p><b>Signale:</b> ▲ <b>Kauf</b> beim ersten Eintritt in ≥ ${BUY}. ▼ <b>Verkauf in drei Tranchen</b>: ⅓ bei ≤ ${SELLS[0]},
-  ⅔ bei ≤ ${SELLS[1]}, Rest bei ≤ ${SELLS[2]}. Eine neue Runde beginnt erst, wenn der Score wieder ${D.reset} erreicht – so gibt
-  es pro Tief nur ein Kaufsignal.</p>${calTxt}
+  <p><b>Signale (einstellbar):</b> Kauf in ${nB} Tranche${nB > 1 ? 'n' : ''} bei Score ${buyLv().map(v => '≥ ' + String(+v.toFixed(1)).replace('.', ',')).join(', ')},
+  Verkauf in ${nS} Tranche${nS > 1 ? 'n' : ''} bei ${sellLv().map(v => '≤ ' + String(+v.toFixed(1)).replace('.', ',')).join(', ')}. Jede Stufe zählt einmal
+  je Runde; eine neue Runde beginnt erst, wenn der Score wieder ${D.reset} erreicht. Grün = kaufen, rot = verkaufen.</p>${calTxt}${evTxt}
   <p><b>Ehrlichkeit:</b> Jede Kerze nutzt nur Daten bis zu dieser Kerze – alte Signale ändern sich nicht. Die gestrichelten
   Hoch/Tief-Linien (Kursumkehr um mindestens die eingestellte Schwelle) und die ₿-Zyklus-Linien (Hoch gold, Tief türkis) (höchstes und tiefstes
   Bitcoin-Niveau je Halving-Zyklus, fest hinterlegt) stehen erst im Nachhinein fest und zeigen nur, wie gut der Score getroffen hätte. Kein Indikator kann
@@ -1899,15 +2043,17 @@ $('tgPiv').addEventListener('click', () => { showPiv = !showPiv; store('piv', sh
 $('tgCyc').addEventListener('click', () => { showCyc = !showCyc; store('cyc', showCyc ? '1' : '0'); syncOpts(); redraw(); });
 $('thr').addEventListener('input', () => { store('thr_' + mode, $('thr').value); $('thrv').textContent = $('thr').value + ' %'; if (G) { G.zz = null; redraw(); } });
 $('zseg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; zsel = b.dataset.z; store('zsel', zsel); show(true); });
-// Signale wie auf dem Server: Kauf = erster Eintritt ≥80 je Runde, Verkauf ⅓/⅔/3/3 bei ≤30/20/10
-function signalsJS(z){
-  const out = [], first = (enter, reset, code) => { let armed = true;
-    for (let i = 0; i < z.length; i++) { const v = z[i]; if (v == null) continue; const p = i ? (z[i - 1] ?? 50) : 50;
-      if (reset(v)) armed = true;
-      if (armed && enter(v, p)) { out.push([i, code]); armed = false; } } };
-  first((v, p) => v >= BUY && p < BUY, v => v <= D.reset, 'B');
-  SELLS.forEach((lv, k) => first((v, p) => v <= lv && p > lv, v => v >= D.reset, 'S' + (k + 1)));
-  return out;
+// Signale: Kauf-Tranche k beim ersten Eintritt über ihre Schwelle je Runde, Verkauf-Tranche k beim ersten Eintritt
+// unter ihre Schwelle. Eine neue Runde beginnt, wenn der Score wieder die Mitte (50) erreicht.
+function signalsJS(z, from){
+  const out = [], f0 = from || 0;
+  const run = (lv, up, code) => { let armed = true;
+    for (let i = f0; i < z.length; i++) { const v = z[i]; if (v == null) continue; const p = i > f0 ? (z[i - 1] ?? 50) : 50;
+      if (up ? v <= D.reset : v >= D.reset) armed = true;
+      if (armed && (up ? v >= lv && p < lv : v <= lv && p > lv)) { out.push([i, code]); armed = false; } } };
+  buyLv().forEach((lv, k) => run(lv, true, 'B' + (k + 1)));
+  sellLv().forEach((lv, k) => run(lv, false, 'S' + (k + 1)));
+  return out.sort((a, b) => a[0] - b[0] || (a[1] < b[1] ? -1 : 1));
 }
 // Echte Hochs/Tiefs (im Nachhinein): Kursumkehr um mindestens die eingestellte Schwelle
 function zigzag(c, th){
@@ -1932,6 +2078,100 @@ function zigzag(c, th){
 function idxAt(t){ const c = G.T.c; let lo = 0, hi = c.length - 1; if (t < c[0][0]) return -1;
   while (lo < hi) { const m = (lo + hi + 1) >> 1; if (c[m][0] <= t) lo = m; else hi = m - 1; } return lo; }
 
+
+// ---------------- Simulation (Backtest) mit deutschen Steuer-Varianten (Schätzung)
+const SIMDEF = {start: '2022-01-01', budget: 10000, prod: 'spot', fee: 0.1, lev: 2, fund: 10, taxP: 35, freeP: 1000, taxC: 26.375, freeC: 1000};
+let SIM = Object.assign({}, SIMDEF); try { Object.assign(SIM, JSON.parse(store('sim') || '{}')); } catch (e) {}
+const SIMF = {simStart: 'start', simBudget: 'budget', simProd: 'prod', simFee: 'fee', simLev: 'lev', simFund: 'fund',
+  simTaxP: 'taxP', simFreeP: 'freeP', simTaxC: 'taxC', simFreeC: 'freeC'};
+Object.entries(SIMF).forEach(([id, k]) => { const el = $(id); el.value = SIM[k];
+  el.addEventListener('change', () => { SIM[k] = el.type === 'number' ? +el.value : el.value; store('sim', JSON.stringify(SIM)); simulate(); }); });
+function simulate(){
+  if (!G) return;
+  const T = G.T, c = T.c, Z = zArr(T), n = c.length, P = SIM;
+  document.querySelectorAll('.futonly').forEach(e => e.style.display = P.prod === 'fut' ? '' : 'none');
+  document.querySelectorAll('.spotonly').forEach(e => e.style.display = P.prod === 'spot' ? '' : 'none');
+  document.querySelectorAll('.capOnly').forEach(e => e.style.display = P.prod === 'spot' ? 'none' : '');
+  if (!Z) { $('simres').innerHTML = '<div class="cat">Kein Score für diesen Zeitrahmen – schalte auf „Gesamt“.</div>'; $('trades').innerHTML = ''; $('simnote').textContent = ''; return; }
+  const t0 = Date.parse(P.start + 'T00:00:00Z') / 1000;
+  let i0 = c.findIndex(k => k[0] >= t0); if (i0 < 0) i0 = n - 1;
+  const fee = P.fee / 100, L = P.prod === 'fut' ? Math.max(1, P.lev) : 1, fund = P.prod === 'fut' ? P.fund / 100 : 0;
+  const eurTo = t => ccy === 'EUR' ? 1 : (fxAt(t) || 1.1);        // Steuer-Freigrenzen sind in Euro
+  const sig = signalsJS(Z, i0);
+  let cash = P.budget, lots = [], rows = [], fees = 0, taxes = 0, buyPlan = 0, sellPlan = 0, si = 0;
+  const yr = {};   // Gewinne je Jahr: priv (privates Veräußerungsgeschäft) / cap (Kapitalerträge)
+  const addGain = (t, kind, g) => { const y = new Date(t * 1000).getUTCFullYear(); yr[y] = yr[y] || {priv: 0, cap: 0, t}; yr[y][kind] += g; yr[y].t = t; };
+  const taxYear = y => { const g = yr[y]; if (!g || g.done) return 0; g.done = true; let tx = 0;
+    if (g.priv > 0 && g.priv > P.freeP * eurTo(g.t)) tx += g.priv * P.taxP / 100;          // Freigrenze: darüber alles steuerpflichtig
+    if (g.cap > 0) tx += Math.max(0, g.cap - P.freeC * eurTo(g.t)) * P.taxC / 100;        // Pauschbetrag: nur der Teil darüber
+    return tx; };
+  const lotValue = (lt, px, t) => { const fundCost = lt.margin * (lt.lev - 1 > 0 || P.prod === 'fut' ? lt.lev : 0) * fund * (t - lt.t) / 31557600;
+    return P.prod === 'fut' ? Math.max(0, lt.margin + lt.units * (px - lt.entry) - fundCost) : lt.units * px; };
+  let curYear = new Date(c[i0][0] * 1000).getUTCFullYear();
+  for (let i = i0; i < n; i++) {
+    const [t, , hi, lo, px] = c[i], y = new Date(t * 1000).getUTCFullYear();
+    if (y !== curYear) { const tx = taxYear(curYear); if (tx) { cash -= tx; taxes += tx; rows.push([t, 'Steuer ' + curYear, null, tx, null, '']); } curYear = y; }
+    if (P.prod === 'fut') lots = lots.filter(lt => { if (lotValue(lt, lo, t) > 0) return true;
+      rows.push([t, 'Liquidation', lo, 0, -100, `Kauf ${fmtDate(lt.t)} @ ${price(lt.entry)}`]); addGain(t, 'cap', -lt.cost); return false; });
+    while (si < sig.length && sig[si][0] === i) {
+      const code = sig[si][1], k = +code.slice(1); si++;
+      if (code[0] === 'B') {
+        if (k === 1 || !buyPlan) buyPlan = cash / nB;
+        const amt = Math.min(buyPlan, cash); if (amt < 1) continue;
+        const f = amt * fee, inv = amt - f; fees += f; cash -= amt;
+        lots.push({t, entry: px, units: inv * L / px, margin: inv, cost: amt, lev: L});
+        rows.push([t, `Kauf ${nB > 1 ? k + '/' + nB : ''}`, px, amt, null, '']);
+      } else {
+        const total = lots.reduce((a, lt) => a + lt.units, 0); if (total <= 0) continue;
+        if (k === 1 || !sellPlan) sellPlan = total / nS;
+        let need = k === nS ? total : Math.min(sellPlan, total);
+        while (need > 1e-12 && lots.length) {
+          const lt = lots[0], u = Math.min(lt.units, need), fr = u / lt.units;
+          const val = lotValue(lt, px, t) * fr, f = u * px * fee, net = Math.max(0, val - f), basis = lt.cost * fr;
+          const gain = net - basis, held = (t - lt.t) / 86400;
+          fees += f; cash += net;
+          let kind = P.prod === 'spot' ? (held > 365 ? null : 'priv') : 'cap';
+          if (kind) addGain(t, kind, gain);
+          rows.push([t, `Verk. ${nS > 1 ? k + '/' + nS : ''}`, px, net, basis ? (net / basis - 1) * 100 : 0,
+            `Kauf ${fmtDate(lt.t)} @ ${price(lt.entry)} · ${Math.round(held)} T · ${kind ? 'steuerpflichtig' : 'steuerfrei (> 1 Jahr)'}`]);
+          lt.units -= u; lt.margin *= (1 - fr); lt.cost -= basis; need -= u;
+          if (lt.units <= 1e-12) lots.shift();
+        }
+      }
+    }
+  }
+  const tN = c[n - 1][0], pN = c[n - 1][4];
+  const due = taxYear(curYear); cash -= due; taxes += due;            // Steuer des laufenden Jahres (bereits realisiert)
+  const open = lots.reduce((a, lt) => a + lotValue(lt, pN, tN), 0);
+  // Steuer, falls die offenen Positionen heute verkauft würden (Schätzung)
+  let taxOpen = 0;
+  lots.forEach(lt => { const g = lotValue(lt, pN, tN) - lt.cost, held = (tN - lt.t) / 86400;
+    if (g > 0) taxOpen += P.prod === 'spot' ? (held > 365 ? 0 : g * P.taxP / 100) : g * P.taxC / 100; });
+  const value = cash + open, after = value - taxOpen;
+  // Vergleich: am Startdatum alles kaufen und halten (ohne Hebel)
+  const p0 = c[i0][4], hold = P.budget * (1 - fee) / p0 * pN * (1 - fee), hg = hold - P.budget, heldD = (tN - c[i0][0]) / 86400;
+  const holdTax = hg > 0 ? (P.prod === 'spot' ? (heldD > 365 ? 0 : (hg > P.freeP * eurTo(tN) ? hg * P.taxP / 100 : 0)) : Math.max(0, hg - P.freeC * eurTo(tN)) * P.taxC / 100) : 0;
+  const card = (l, v, sub, col) => `<div class="cat">${l}<b style="color:${col || 'var(--txt)'}">${v}</b>${sub || ''}</div>`;
+  const gp = (after / P.budget - 1) * 100, hp = ((hold - holdTax) / P.budget - 1) * 100;
+  $('simres').innerHTML =
+    card('Wert heute (nach Steuer)', money(after), pct(gp), gp >= 0 ? 'var(--buy)' : 'var(--sell)') +
+    card('Kaufen & Halten', money(hold - holdTax), pct(hp), hp >= 0 ? 'var(--buy)' : 'var(--sell)') +
+    card('Davon offen investiert', money(open), lots.length ? `${lots.length} Position${lots.length > 1 ? 'en' : ''}` : 'alles verkauft') +
+    card('Steuern', money(taxes + taxOpen), taxOpen ? `inkl. ${money(taxOpen)} bei Verkauf heute` : 'bezahlt') +
+    card('Gebühren', money(fees), `${rows.filter(r => r[2] != null).length} Trades`) +
+    card('Zeitraum', `${fmtDate(c[i0][0])}`, `bis ${fmtDate(tN)} · ${TFL[ctf]}`);
+  const prodTxt = {spot: `Spot: Gewinne nach über 1 Jahr Haltedauer steuerfrei, sonst ${String(P.taxP).replace('.', ',')} % (Freigrenze ${P.freeP} € pro Jahr), Verkauf nach First in, First out.`,
+    etp: `ETP: Abgeltungsteuer ${String(P.taxC).replace('.', ',')} % auf Gewinne über ${P.freeC} € pro Jahr, keine Haltefrist.`,
+    fut: `Futures mit Hebel ${L}×: Abgeltungsteuer ${String(P.taxC).replace('.', ',')} % über ${P.freeC} €, Finanzierung ${String(P.fund).replace('.', ',')} % p. a. auf den Hebelbetrag, Liquidation bei Totalverlust der Position. Verlustverrechnung vereinfacht.`};
+  $('simnote').innerHTML = `${prodTxt[P.prod]} Ausführung zum Schlusskurs der Signal-Kerze, ${nB} Kauf- und ${nS} Verkaufs-Tranche${nS > 1 ? 'n' : ''}.
+    Steuern nur grob geschätzt – keine Steuerberatung. Die Einstellungen des Scores wurden mit Wissen über die Vergangenheit kalibriert, daher wirkt der Backtest eher zu gut.`;
+  const show_ = rows.slice().reverse().slice(0, 300);
+  $('trades').innerHTML = show_.length ? `<tr><th>Datum</th><th>Aktion</th><th>Preis</th><th>Betrag</th><th>Ergebnis</th></tr>` + show_.map(r =>
+    `<tr><td>${fmtDate(r[0])}</td><td class="${r[1].startsWith('Kauf') ? 'up' : 'dn'}">${esc(r[1])}</td><td>${r[2] == null ? '' : price(r[2])}</td>
+     <td>${money(r[3])}</td><td>${r[4] == null ? '' : `<b class="${r[4] >= 0 ? 'up' : 'dn'}">${pct(r[4])}</b>`}<br><small>${esc(r[5])}</small></td></tr>`).join('')
+    : '<tr><td>Keine Signale im gewählten Zeitraum.</td></tr>';
+}
+
 // ---------------- Detail
 function destroy(){ if (G) G.charts.forEach(c => c.chart.remove()); G = null; }
 function closeCoin(){ if (desktop() && D.coins.length) { openCoin(D.coins[0].s); return; }
@@ -1941,7 +2181,7 @@ $('tfc').addEventListener('click', e => { const b = e.target.closest('.chip'); i
 function header(){
   const meta = cur.meta;
   $('dt').textContent = landscape() ? meta.s : meta.s + ' · ' + meta.n;
-  $('ds').innerHTML = price(meta.p) + ' <span class="' + (meta.ch >= 0 ? 'up' : 'dn') + '">' + pct(meta.ch) + '</span> · #' + meta.r;
+  $('ds').innerHTML = price(toC(meta.p)) + ' <span class="' + (meta.ch >= 0 ? 'up' : 'dn') + '">' + pct(meta.ch) + '</span> · #' + meta.r;
 }
 async function openCoin(sym){
   const meta = D.coins.find(x => x.s === sym); if (!meta) return closeCoin();
@@ -1961,6 +2201,14 @@ async function openCoin(sym){
   if (id !== reqId) return;
   cur.data = cache[meta.f]; $('mres').textContent = '';
   show();
+}
+function convT(T){
+  if (ccy !== 'EUR' || !FX.length) return T;
+  if (!T._eur || T._eurN !== T.c.length || T._eurF !== T.c[0][0]) {
+    T._eur = T.c.map(k => { const f = fxAt(k[0]) || 1; return [k[0], k[1] / f, k[2] / f, k[3] / f, k[4] / f]; });
+    T._eurN = T.c.length; T._eurF = T.c[0][0];
+  }
+  return Object.assign({}, T, {c: T._eur});
 }
 function waitLib(cb, n){ if (window.LightweightCharts) cb(); else if ((n || 0) < 100) setTimeout(() => waitLib(cb, (n || 0) + 1), 100); }
 async function loadInd(T){
@@ -1989,8 +2237,9 @@ async function show(keep){
   if (ownZ && T.b) details(T);
   if (!keep) M = null;
   const ind = await loadInd(T);
+  const Tc = convT(T);
   destroy();
-  waitLib(() => draw(T, ind));
+  waitLib(() => { draw(Tc, ind); simulate(); });
 }
 
 function details(T){
@@ -2079,10 +2328,11 @@ function draw(T, ind){
         wickUpColor: '#22c55e', wickDownColor: '#ef4444', priceFormat: {type: 'price', precision: prec, minMove: Math.pow(10, -prec)}});
       series.setData(T.c.map(k => ({time: k[0], open: k[1], high: k[2], low: k[3], close: k[4]})));
       const sg = hasZ ? signalsJS(Z) : [], mk = [];
-      const LBL = {B: ['Kauf', '#22c55e', 'belowBar', 'arrowUp', 1.3], S1: ['⅓', '#fb923c', 'aboveBar', 'arrowDown', 0.8],
-        S2: ['⅔', '#f87171', 'aboveBar', 'arrowDown', 0.9], S3: ['3/3', '#ef4444', 'aboveBar', 'arrowDown', 1]};
-      sg.forEach(([j, code]) => { if (j < 0 || j >= n) return; const m = LBL[code];
-        mk.push({time: T.c[j][0], position: m[2], color: m[1], shape: m[3], text: m[0], size: m[4]}); });
+      sg.forEach(([j, code]) => { if (j < 0 || j >= n) return;
+        const buy = code[0] === 'B', k = +code.slice(1), N = buy ? nB : nS, pr = price(T.c[j][4]);
+        mk.push({time: T.c[j][0], position: buy ? 'belowBar' : 'aboveBar', color: buy ? '#22c55e' : '#ef4444',
+          shape: buy ? 'arrowUp' : 'arrowDown', size: N > 1 ? 0.9 : 1.2,
+          text: (buy ? 'Kauf' : 'Verk.') + (N > 1 ? ` ${k}/${N}` : '') + ' ' + pr}); });
       mk.sort((a, b) => a.time - b.time);
       series.setMarkers(mk);
       MA.forEach(([k, l, col]) => { if (!mas.includes(k)) return; const v = maSeries(T.c, k); if (!v) return;
@@ -2097,8 +2347,8 @@ function draw(T, ind){
         priceFormat: {type: 'price', precision: 0, minMove: 1}, lastValueVisible: true, priceLineVisible: false,
         autoscaleInfoProvider: () => ({priceRange: {minValue: 0, maxValue: 100}})});
       series.setData(T.c.map((k, j) => Z[j] == null ? {time: k[0]} : {time: k[0], value: Z[j]}));
-      series.createPriceLine({price: BUY, color: '#22c55e', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'Kauf'});
-      SELLS.forEach((lv, q) => series.createPriceLine({price: lv, color: ['#fb923c', '#f87171', '#ef4444'][q], lineWidth: 1, lineStyle: 2, axisLabelVisible: q === 0, title: q === 0 ? 'Verk.' : ''}));
+      buyLv().forEach((lv, q) => series.createPriceLine({price: lv, color: '#22c55e', lineWidth: 1, lineStyle: 2, axisLabelVisible: q === 0, title: q === 0 ? 'Kauf' : ''}));
+      sellLv().forEach((lv, q) => series.createPriceLine({price: lv, color: '#ef4444', lineWidth: 1, lineStyle: 2, axisLabelVisible: q === 0, title: q === 0 ? 'Verk.' : ''}));
     } else {
       const src = ind.v[p.name];
       vals = T.c.map((k, j) => { const q = j - pre; return q >= 0 && q < src.length ? src[q] : null; });
@@ -2187,7 +2437,7 @@ function drawPiv(){
     const crowded = vis.length > 1 && Math.min(...vis.slice(1).map((v, j) => v.x - vis[j].x)) < 70;
     for (const v of vis) {
       const d = new Date(v.t * 1000), mm = `${d.getMonth() + 1}/${String(d.getFullYear()).slice(crowded ? 2 : 0)}`;
-      const txt = crowded ? `${v.k === 'H' ? '▲' : '▼'} ${mm}` : `₿-Zyklus-${v.k === 'H' ? 'Hoch' : 'Tief'} ${mm}<br>${price(v.p)}`;
+      const txt = crowded ? `${v.k === 'H' ? '▲' : '▼'} ${mm}` : `₿-Zyklus-${v.k === 'H' ? 'Hoch' : 'Tief'} ${mm}<br>${price(toC(v.p, v.t))}`;
       const w = crowded ? 54 : 118, left = Math.min(v.x + 4, W - w - 2);
       let row = rowEnd.findIndex(e => e < left - 4);
       out.push(`<div class="vl cyc ${v.k}" style="left:${v.x}px"></div>`);
