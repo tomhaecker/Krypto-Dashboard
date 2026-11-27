@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """
-Krypto-Dashboard v5 – läuft automatisch über GitHub Actions (stündlich).
+Krypto-Dashboard v4 – läuft automatisch über GitHub Actions (stündlich).
 
 Ablauf:
 1. Top-Coins nach Marktkapitalisierung (CoinGecko, Ersatz CoinPaprika), ohne Stablecoins/Wrapped.
 2. Kerzen in 9 Zeitrahmen (Binance, Ersatz OKX/KuCoin). Tag/Woche/Monat mit kompletter Historie.
 3. Markt-Daten: Fear & Greed Index, Dollar-Index (DXY), Gold, BTC-Dominanz (Näherung),
    eigener Gesamtmarkt-Index aus den Top-20-Coins.
-4. Antizyklischer Score 0–100 je Kerze (ohne Repainting) in zwei Modi (kurzfristig / langfristig):
-   Lage + Markt (Richtung), Wende inkl. Zyklenanalyse (Bestätigung), übergeordneter Zeitrahmen
-   und Gesamtmarkt (Filter). Kauf-Signal einmal je Runde, Verkauf in drei Tranchen.
-5. Wöchentliche Auto-Kalibrierung: Kaufsignale möglichst selten und möglichst nah am echten Tief,
-   geprüft an einem getrennten Testzeitraum.
+4. Antizyklischer Score 0–100 je Kerze (ohne Repainting) aus Lage + Markt (Richtung),
+   Wende (Bestätigung), übergeordnetem Zeitrahmen und Gesamtmarkt (Filter).
+5. Wöchentliche Auto-Kalibrierung der Gewichte mit Trainings- und Testzeitraum.
 6. Schreibt site/index.html, site/data/<COIN>.json, site/meta.json, site/calib.json.
 
 Keine Anlageberatung.
@@ -53,6 +51,12 @@ TF_SEC = {"1h": 3600, "4h": 14400, "1d": 86400, "5d": 432000, "1w": 604800, "2w"
 HTF = {"1h": "4h", "4h": "1d", "1d": "1w", "5d": "2w", "1w": "1M", "2w": "1M"}
 NATIVE_LIMIT = {"1h": INTRADAY_KEEP, "4h": INTRADAY_KEEP}
 FULL_HISTORY = {"1d", "1w", "1M"}
+
+# Gesamt-Score: Kombination mehrerer Zeitrahmen (je nur die zuletzt abgeschlossene Kerze)
+OVERALL = {"short": {"1h": 0.25, "4h": 0.40, "1d": 0.35},
+           "long": {"1d": 0.30, "1w": 0.45, "1M": 0.25}}
+# Bitcoin-Halvings: Grenzen der klassischen Vier-Jahres-Zyklen
+HALVINGS = ["2012-11-28", "2016-07-09", "2020-05-11", "2024-04-20", "2028-04-15"]
 
 GROUP_OF = {
     "RSI (14)": "Lage", "Stochastic RSI": "Lage", "Williams %R": "Lage", "CCI (20)": "Lage", "MFI (14)": "Lage",
@@ -130,7 +134,7 @@ WRAPPED_SYMBOLS = {
 NAME_SKIP = ("wrapped", "staked", "bridged", "restaked", "liquid staking", "tokenized", "bitcoin bep2")
 
 SESSION = requests.Session()
-SESSION.headers["User-Agent"] = "krypto-dashboard/5.0 (+github-actions)"
+SESSION.headers["User-Agent"] = "krypto-dashboard/4.0 (+github-actions)"
 BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
@@ -854,19 +858,24 @@ def mode_stats(c, buys, sells, lo_idx, N):
     return res
 
 
-def tf_output(df, per_mode, details, extra):
+def rnd(arr):
+    return [None if np.isnan(x) else round(float(x), 1) for x in arr]
+
+
+def tf_output(df, per_mode, details, extra, overall):
     out = {"c": [[int(r.t), sig(r.o), sig(r.h), sig(r.l), sig(r.c)] for r in df.itertuples()]}
     n = len(df)
     for mode, M in MODES.items():
         sfx = "" if mode == "short" else "l"
         N = M["pivN"] if n >= 3 * M["pivN"] else max(3, n // 8)
         hi, lo = pivot_idx(df["h"].values, df["l"].values, N)
-        out["p" + sfx] = [[int(df["t"].iloc[i]), "H"] for i in hi] + [[int(df["t"].iloc[i]), "T"] for i in lo]
+        if overall.get(mode) is not None and np.isfinite(overall[mode]).any():
+            out["zg" + sfx] = rnd(overall[mode])
         pm = per_mode.get(mode)
         if pm is None:
             continue
         score, groups = pm
-        out["z" + sfx] = [None if np.isnan(x) else round(float(x), 1) for x in score]
+        out["z" + sfx] = rnd(score)
         buys, sells = signals(score)
         out["sg" + sfx] = [[i, "B"] for i in buys] + [[i, f"S{k}"] for k, s in enumerate(sells, 1) for i in s]
         out["st" + sfx] = mode_stats(df["c"].values, buys, sells, lo, N)
@@ -875,6 +884,51 @@ def tf_output(df, per_mode, details, extra):
         out["b"] = details
     out.update(extra)
     return out
+
+
+OVERALL_K = {"short": 1.0, "long": 1.0}
+
+
+def overall_at(ct, mode, scores):
+    """Gesamt-Score zu den Zeitpunkten ct aus den zuletzt abgeschlossenen Kerzen mehrerer Zeitrahmen."""
+    num = np.zeros(len(ct))
+    den = np.zeros(len(ct))
+    for tf, w in OVERALL[mode].items():
+        if tf not in scores:
+            continue
+        sct, sv = scores[tf]
+        v = take(sv, np.searchsorted(sct, ct, side="right") - 1)
+        ok = ~np.isnan(v)
+        num[ok] += w * v[ok]
+        den[ok] += w
+    with np.errstate(invalid="ignore", divide="ignore"):
+        avg = np.where(den > 0, num / np.where(den > 0, den, 1), np.nan)
+    # Mitteln mehrerer Zeitrahmen drückt den Wert Richtung 50 – Spreizung wieder angleichen
+    return np.clip(50 + (avg - 50) * OVERALL_K[mode], 0, 100)
+
+
+def btc_cycle_points(btc_daily):
+    """Hochs und Tiefs der klassischen Vier-Jahres-Zyklen, bestimmt aus dem Bitcoin-Tageschart."""
+    if btc_daily is None or len(btc_daily) < 200:
+        return []
+    t, h, l, c = (btc_daily[k].values for k in ("t", "h", "l", "c"))
+    now = time.time()
+    hv = [int(datetime.strptime(x, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()) for x in HALVINGS]
+    pts = []
+    for a, b in zip(hv[:-1], hv[1:]):
+        idx = np.where((t >= a) & (t < b))[0]
+        if len(idx) < 60:
+            continue
+        ih = idx[np.argmax(h[idx])]
+        done = b <= now
+        top_ok = done or c[-1] <= 0.7 * h[ih]
+        pts.append([int(t[ih]), "H", sig(h[ih]), bool(top_ok)])
+        after = idx[idx > ih]
+        if len(after):
+            il = after[np.argmin(l[after])]
+            if done or (top_ok and c[-1] >= 1.5 * l[il] and now - t[il] > 180 * 86400):
+                pts.append([int(t[il]), "T", sig(l[il]), True])
+    return pts
 
 
 def last_valid(arr):
@@ -975,50 +1029,70 @@ def run(coins_loader=load_coins, macro_loader=load_macro, html=None):
         cfg = calib["modes"][mode]["cfg"]
         mode_idx[mode] = {tf: combine(with_groups(C, M["weights"]), cfg)[0] for tf, C in idx_C.items()}
     listing = []
+    prepared = []
     for (meta, src, frames), cc in zip(loaded, comps):
-        tfs = {}
-        scores_by_mode = {m: {} for m in MODES}
         gm = {mode: {tf: with_groups(C, M["weights"]) for tf, C in cc.items()} for mode, M in MODES.items()}
         bases = {mode: {tf: combine(C, calib["modes"][mode]["cfg"])[0] for tf, C in gm[mode].items()} for mode in MODES}
+        per_tf = {tf: {} for tf in frames}
+        extras = {tf: {} for tf in frames}
+        scores = {mode: {} for mode in MODES}
+        for tf, C in cc.items():
+            htf = HTF.get(tf)
+            for mode in MODES:
+                cal = calib["modes"][mode]
+                cfg, S = cal["cfg"], cal["S"]
+                Cg = gm[mode][tf]
+                hb = take(bases[mode][htf], htf_map(C, cc[htf])) if htf in cc else None
+                mb = take(mode_idx[mode][tf], exact_index(idx_C[tf]["t"], C["t"])) if tf in idx_C else None
+                score = to_score(combine(Cg, cfg, hb, mb)[1], S)
+                last = len(score) - 1
+                groups = {g: (None if np.isnan(Cg[k][last]) else round(float(Cg[k][last])))
+                          for g, k in (("Lage", "lage"), ("Wende", "wende"), ("Markt", "markt"))}
+                per_tf[tf][mode] = (score, groups)
+                scores[mode][tf] = (C["ct"], score)
+                if mode == "short":
+                    hv = to_score(hb, S)[-1] if hb is not None else np.nan
+                    mv = to_score(mb, S)[-1] if mb is not None else np.nan
+                    extras[tf]["f"] = {"htf": [htf, None if np.isnan(hv) else round(float(hv))] if htf in cc else None,
+                                       "mkt": None if np.isnan(mv) else round(float(mv))}
+        prepared.append((meta, src, frames, cc, gm, per_tf, extras, scores))
+
+    # Spreizung des Gesamt-Scores so wählen, dass er so stark schwankt wie ein einzelner Zeitrahmen
+    for mode in MODES:
+        OVERALL_K[mode] = 1.0
+        base_tf = max(OVERALL[mode], key=OVERALL[mode].get)
+        ratios = []
+        for p in prepared[:40]:
+            sc = p[7][mode]
+            if base_tf not in sc:
+                continue
+            ct, comp = sc[base_tf]
+            ov = overall_at(ct, mode, sc)
+            ok = ~np.isnan(comp) & ~np.isnan(ov)
+            if ok.sum() > 100 and np.std(ov[ok]) > 0:
+                ratios.append(np.std(comp[ok]) / np.std(ov[ok]))
+        OVERALL_K[mode] = float(np.clip(np.median(ratios), 1.0, 2.5)) if ratios else 1.0
+        log(f"Gesamt-Score {mode}: Spreizung {OVERALL_K[mode]:.2f}")
+
+    for meta, src, frames, cc, gm, per_tf, extras, scores in prepared:
+        tfs = {}
         for tf, _ in TIMEFRAMES:
             df = frames.get(tf)
             if df is None:
                 continue
             C = cc.get(tf)
-            per_mode, details, extra = {}, None, {}
+            extra, details = extras.get(tf, {}), None
             if C is not None:
-                for mode in MODES:
-                    cal = calib["modes"][mode]
-                    cfg, S = cal["cfg"], cal["S"]
-                    Cg = gm[mode][tf]
-                    hb = mb = None
-                    htf = HTF.get(tf)
-                    if htf in cc:
-                        hb = take(bases[mode][htf], htf_map(C, cc[htf]))
-                    if tf in idx_C:
-                        mb = take(mode_idx[mode][tf], exact_index(idx_C[tf]["t"], C["t"]))
-                    score = to_score(combine(Cg, cfg, hb, mb)[1], S)
-                    last = len(score) - 1
-                    groups = {g: (None if np.isnan(Cg[k][last]) else round(float(Cg[k][last])))
-                              for g, k in (("Lage", "lage"), ("Wende", "wende"), ("Markt", "markt"))}
-                    per_mode[mode] = (score, groups)
-                    if mode == "short":
-                        hv = to_score(hb, S)[-1] if hb is not None else np.nan
-                        mv = to_score(mb, S)[-1] if mb is not None else np.nan
-                        extra["f"] = {"htf": [htf, None if np.isnan(hv) else round(float(hv))] if htf in cc else None,
-                                      "mkt": None if np.isnan(mv) else round(float(mv))}
                 last = len(df) - 1
                 details = []
                 for name, v in C["ind"].items():
-                    sc, raw, vf, note = v[0], v[1], v[2], v[3]
-                    sv = float(np.asarray(sc, dtype=float)[last])
-                    rv = float(np.asarray(raw, dtype=float)[last])
+                    sv = float(np.asarray(v[0], dtype=float)[last])
+                    rv = float(np.asarray(v[1], dtype=float)[last])
                     if np.isnan(sv):
                         continue
                     details.append([name, GROUP_OF.get(name, "Markt"), round(sv),
-                                    "–" if np.isnan(rv) else vf(rv), "–" if np.isnan(rv) else note(rv)])
+                                    "–" if np.isnan(rv) else v[2](rv), "–" if np.isnan(rv) else v[3](rv)])
                 extra["cyp"] = C["cyc_per"]
-                # Verlauf aller Indikatoren für die Zusatz-Fenster (wird nur bei Bedarf geladen)
                 pane = {}
                 for name, v in C["ind"].items():
                     series = v[4] if len(v) > 4 else v[1]
@@ -1028,18 +1102,21 @@ def run(coins_loader=load_coins, macro_loader=load_macro, html=None):
                 with open(os.path.join(OUT_DIR, "data", "ind", f"{safe_name(meta['sym'])}_{tf}.json"), "w") as f:
                     json.dump({"t0": int(df["t"].iloc[0]), "v": pane}, f, separators=(",", ":"))
                 extra["ind"] = 1
-            tfs[tf] = tf_output(df, per_mode, details, extra)
-            for mode in MODES:
-                key = "z" if mode == "short" else "zl"
-                scores_by_mode[mode][tf] = last_valid(tfs[tf].get(key))
+            ct = close_times(df["t"].values)
+            overall = {mode: overall_at(ct, mode, scores[mode]) for mode in MODES}
+            tfs[tf] = tf_output(df, per_tf.get(tf, {}), details, extra, overall)
         fname = safe_name(meta["sym"])
         with open(os.path.join(OUT_DIR, "data", fname + ".json"), "w", encoding="utf-8") as f:
             json.dump({"s": meta["sym"], "src": src, "tf": tfs}, f, separators=(",", ":"))
+        far = np.array([2 ** 40])
+        g_now = {mode: overall_at(far, mode, scores[mode])[0] for mode in MODES}
         listing.append({"s": meta["sym"], "n": meta["name"], "r": meta["rank"], "f": fname, "src": src,
                         "p": sig(meta["price"] or frames["4h"]["c"].iloc[-1]),
                         "ch": None if meta["chg"] is None else round(float(meta["chg"]), 2),
-                        "sc": {tf: scores_by_mode["short"].get(tf) for tf in LIST_TFS},
-                        "scl": {tf: scores_by_mode["long"].get(tf) for tf in LIST_TFS}})
+                        "g": None if np.isnan(g_now["short"]) else round(float(g_now["short"]), 1),
+                        "gl": None if np.isnan(g_now["long"]) else round(float(g_now["long"]), 1),
+                        "sc": {tf: last_valid(tfs.get(tf, {}).get("z")) for tf in LIST_TFS},
+                        "scl": {tf: last_valid(tfs.get(tf, {}).get("zl")) for tf in LIST_TFS}})
     listing.sort(key=lambda c: c["r"])
 
     mk = {}
@@ -1053,7 +1130,8 @@ def run(coins_loader=load_coins, macro_loader=load_macro, html=None):
                "buy": BUY_LEVEL, "sells": SELL_LEVELS, "reset": RESET_LEVEL, "h": STAT_HORIZON, "tfs": TIMEFRAMES,
                "ltfs": LIST_TFS, "info": IND_INFO, "go": GROUP_OF,
                "modes": {m: {"label": M["label"], "pivN": M["pivN"], "w": M["weights"]} for m, M in MODES.items()},
-               "cal": calib, "mkt": mk, "coins": listing}
+               "cal": calib, "mkt": mk, "overall": OVERALL, "overall_k": OVERALL_K,
+               "btcc": btc_cycle_points(btc.get("1d") if btc else None), "coins": listing}
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=float).replace("</", "<\\/")
     with open(os.path.join(OUT_DIR, "index.html"), "w", encoding="utf-8") as f:
         f.write(html.replace("__DATA__", data))
@@ -1136,7 +1214,7 @@ padding:calc(10px + env(safe-area-inset-top)) 12px 8px;border-bottom:1px solid v
 .mres{margin:2px 8px 6px;font-size:13px;height:20px;line-height:20px;color:var(--mut);white-space:nowrap;overflow:hidden;
 text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 .mres b{font-size:14px}
-.cw{position:relative;touch-action:none;user-select:none;-webkit-user-select:none}
+.cw{position:relative;user-select:none;-webkit-user-select:none}
 .cwrap{position:relative}
 .axt{position:absolute;left:0;right:0;bottom:0;height:80px;z-index:6;touch-action:none;
 background:linear-gradient(transparent,rgba(96,165,250,.07));border-top:1px solid rgba(96,165,250,.25)}
@@ -1211,6 +1289,26 @@ padding:14px 14px calc(14px + env(safe-area-inset-bottom))}
   #dmain .box h3{min-height:40px}
   #dmain .sec,#dmain .note{display:none}
 }
+.touch.pany{touch-action:pan-y}
+.pscroll{position:absolute;top:0;right:0;width:78px;z-index:7;touch-action:pan-y}
+.kl{display:flex;gap:5px}
+.sc2{min-width:42px;text-align:center;font-weight:800;font-size:16px;padding:3px 0 4px;border-radius:9px;opacity:.55;line-height:1.1}
+.sc2.act{opacity:1}
+.sc2 small{display:block;font-size:9px;font-weight:700;opacity:.8}
+.opts{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 8px 4px}
+.chip.on[style*="--c"]{background:var(--c);border-color:var(--c);color:#1a1405}
+.thr{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--mut)}
+.thr input{width:92px;accent-color:var(--acc)}
+.thr b{font-weight:600;min-width:64px;font-variant-numeric:tabular-nums}
+.ptag{position:absolute;transform:translateX(-50%);font-size:10.5px;font-weight:700;padding:1px 5px;border-radius:5px;
+white-space:nowrap;font-variant-numeric:tabular-nums}
+.ptag.H{color:#fecaca;background:#7f1d1dcc}.ptag.T{color:#bbf7d0;background:#14532dcc}
+.vl.cyc{border-left:2px solid #eab308;opacity:.85}
+.ctag{position:absolute;top:2px;transform:translateX(4px);font-size:10px;line-height:1.25;color:#1a1405;background:#eab308e6;
+padding:1px 5px;border-radius:5px;white-space:nowrap;font-weight:700}
+.bub.sm{padding:3px 7px;font-size:11px}.bub.sm b{font-size:12px}
+.bub.mid{transform:translate(-50%,-50%);padding:3px 8px}
+@media (orientation:landscape) and (max-height:560px){ .opts{margin:0 4px 2px} }
 </style>
 </head>
 <body>
@@ -1252,9 +1350,15 @@ padding:14px 14px calc(14px + env(safe-area-inset-bottom))}
   <div id="dmain">
   <div class="box"><h3><div class="seg mseg"><button data-m="short">Kurz</button><button data-m="long">Lang</button></div>
     <span style="display:flex;gap:6px"><button class="addb" id="addp">+ Indikator</button><button class="chip sm" id="now">Jetzt ⇥</button></span></h3>
+    <div class="opts" id="opts">
+      <button class="chip sm" id="tgPiv">Hochs/Tiefs</button>
+      <span class="thr" id="thrw"><input type="range" id="thr" min="3" max="80" step="1"><b id="thrv"></b></span>
+      <button class="chip sm" id="tgCyc" style="--c:#eab308">₿-Zyklus</button>
+      <span class="lbl" style="margin-left:4px">Score:</span><div class="seg" id="zseg"><button data-z="tf">Zeitrahmen</button><button data-z="g">Gesamt</button></div>
+    </div>
     <div class="mres" id="mres"></div>
     <div class="cwrap" id="cwrap"></div>
-    <div class="msg" id="noz" style="display:none">Für diesen Zeitrahmen gibt es zu wenige Kerzen für einen Score.</div>
+    <div class="msg" id="noz" style="display:none">Für diesen Zeitrahmen gibt es zu wenige Kerzen für einen eigenen Score – schalte auf „Gesamt“.</div>
   </div>
   <div class="sec" id="statbox"><h4>Bilanz der Signale (gesamte Historie)</h4><div class="grid2" id="stat"></div><div class="grid4" id="stat2"></div></div>
   <div class="sec" id="fbox"><h4>Filter &amp; Zyklen</h4><div class="grid2" id="filt"></div></div>
@@ -1286,8 +1390,10 @@ const TFL = Object.fromEntries(D.tfs);
 const SEC = {'1h':3600,'4h':14400,'1d':86400,'5d':432000,'1w':604800,'2w':1209600,'1M':2629800,'6M':15778800,'1y':31557600};
 const $ = id => document.getElementById(id);
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
-let filter = 'all', query = '', ltf = store('ltf') || '4h', ctf = store('ctf') || '4h', sortBy = store('sort') || 'mc';
+let filter = 'all', query = '', ltf = store('ltf2') || 'g', ctf = store('ctf') || '4h', sortBy = store('sort') || 'mc';
 let mode = store('mode') === 'long' ? 'long' : 'short';
+let showPiv = store('piv') !== '0', showCyc = store('cyc') !== '0', zsel = store('zsel') === 'tf' ? 'tf' : 'g';
+const thrGet = () => +(store('thr_' + mode) || (mode === 'long' ? 40 : 20));
 let panes = []; try { panes = JSON.parse(store('panes') || '[]') || []; } catch (e) { panes = []; }
 let cur = null, G = null, view = null, liveTs = 0, liveMap = null, reqId = 0, loadingOld = false;
 const cache = {}, indCache = {};
@@ -1322,7 +1428,8 @@ const landscape = () => window.matchMedia('(orientation: landscape) and (max-hei
 // ---------------- Kopfzeile: Markt + Frische
 (function(){
   const m = D.mkt || {}, out = [];
-  if (m.fng) out.push(`<div class="mb">Fear&Greed <b style="color:${color(100 - m.fng[0])}">${Math.round(m.fng[0])}</b> ${esc(m.fng[1])}</div>`);
+  const fgc = v => v < 25 ? '#ef4444' : v < 45 ? '#f97316' : v <= 55 ? '#eab308' : v <= 75 ? '#84cc16' : '#22c55e';
+  if (m.fng) out.push(`<div class="mb">Fear&Greed <b style="color:${fgc(m.fng[0])}">${Math.round(m.fng[0])}</b> ${esc(m.fng[1])}</div>`);
   if (m.dom != null) out.push(`<div class="mb">BTC-Dominanz <b>${m.dom.toFixed(1).replace('.', ',')} %</b></div>`);
   if (m.mcap) out.push(`<div class="mb">Marktkap. <b>${(m.mcap / 1e12).toFixed(2).replace('.', ',')} Bio. $</b> <span class="${m.mcap_ch >= 0 ? 'up' : 'dn'}">${pct(m.mcap_ch)}</span></div>`);
   if (m.dxy) out.push(`<div class="mb">DXY <b>${m.dxy.toFixed(1).replace('.', ',')}</b></div>`);
@@ -1348,12 +1455,13 @@ function setMode(m){
 document.querySelectorAll('.mseg').forEach(s => s.addEventListener('click', e => { const b = e.target.closest('button'); if (b) setMode(b.dataset.m); }));
 
 // ---------------- Liste
-$('ltf').insertAdjacentHTML('beforeend', D.ltfs.map(t => `<button class="chip" data-t="${t}">${TFL[t]}</button>`).join(''));
-function setLtf(t){ ltf = t; store('ltf', t); document.querySelectorAll('#ltf .chip').forEach(b => b.classList.toggle('on', b.dataset.t === t)); render(); }
+$('ltf').insertAdjacentHTML('beforeend', `<button class="chip" data-t="g">Gesamt</button>` + D.ltfs.map(t => `<button class="chip" data-t="${t}">${TFL[t]}</button>`).join(''));
+const TFN = t => t === 'g' ? 'Gesamt' : TFL[t];
+function setLtf(t){ ltf = t; store('ltf2', t); document.querySelectorAll('#ltf .chip').forEach(b => b.classList.toggle('on', b.dataset.t === t)); render(); }
 function setSort(o){ sortBy = o; store('sort', o); document.querySelectorAll('#sort .chip').forEach(b => b.classList.toggle('on', b.dataset.o === o)); render(); }
 $('ltf').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) setLtf(b.dataset.t); });
 $('sort').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) setSort(b.dataset.o); });
-const scoreOf = c => (mode === 'long' ? c.scl : c.sc)[ltf];
+const scoreOf = c => ltf === 'g' ? (mode === 'long' ? c.gl : c.g) : (mode === 'long' ? c.scl : c.sc)[ltf];
 function match(c){
   if (query && !(c.s.toLowerCase().includes(query) || c.n.toLowerCase().includes(query))) return false;
   const s = scoreOf(c);
@@ -1368,7 +1476,7 @@ function render(){
   const all = D.coins.map(scoreOf).filter(s => s != null);
   const avg = all.length ? all.reduce((a, b) => a + b, 0) / all.length : null;
   $('stats').innerHTML =
-    `<div class="stat"><b style="color:${color(avg)}">${avg == null ? '–' : avg.toFixed(0)}</b><span>Ø Score (${TFL[ltf]})</span></div>` +
+    `<div class="stat"><b style="color:${color(avg)}">${avg == null ? '–' : avg.toFixed(0)}</b><span>Ø Score (${TFN(ltf)})</span></div>` +
     `<div class="stat"><b class="up">${all.filter(s => s >= BUY).length}</b><span>in Kaufzone</span></div>` +
     `<div class="stat"><b class="dn">${all.filter(s => s <= SELL).length}</b><span>in Verkaufszone</span></div>`;
   const rows = D.coins.filter(match);
@@ -1380,7 +1488,8 @@ function render(){
       <div class="nm"><b>${esc(c.s)}</b><small>${esc(c.n)}</small>
         <div class="px">${price(c.p)} <span class="${c.ch >= 0 ? 'up' : 'dn'}">${pct(c.ch)}</span> · ${label(s)}</div>
         <div class="bar"><i style="width:${s || 0}%;background:${col}"></i></div></div>
-      <div class="sc" style="color:${col};background:${col}22">${s == null ? '–' : Math.round(s)}</div></li>`;
+      <div class="kl"><div class="sc2${mode === 'short' ? ' act' : ''}" style="color:${color(c.g)};background:${color(c.g)}22"><small>K</small>${c.g == null ? '–' : Math.round(c.g)}</div>
+        <div class="sc2${mode === 'long' ? ' act' : ''}" style="color:${color(c.gl)};background:${color(c.gl)}22"><small>L</small>${c.gl == null ? '–' : Math.round(c.gl)}</div></div></li>`;
   }).join('') : '<div class="empty">Keine Coins in diesem Filter.</div>';
 }
 $('q').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); render(); });
@@ -1419,11 +1528,15 @@ function explain(){
   Danach wird es mit dem <b>übergeordneten Zeitrahmen</b> (Stärke ${String(cfg.kh).replace('.', ',')}) und dem <b>Gesamtmarkt</b>
   (Top-20-Index, Stärke ${String(cfg.km).replace('.', ',')}) abgeglichen. Die Spreizung (Faktor ${cal.S.toFixed(2).replace('.', ',')})
   ist so gewählt, dass rund ${String(cfg.share * 100).replace('.', ',')} % der Kerzen in einer Zone liegen.</p>
+  <p><b>Gesamt-Score:</b> unabhängig vom gewählten Chart. ${mode === 'long' ? '1 T (30 %), 1 W (45 %), 1 M (25 %)' : '1 Std (25 %), 4 Std (40 %), 1 T (35 %)'} –
+  jeweils nur die zuletzt abgeschlossene Kerze, damit sich nichts nachträglich ändert. Weil das Mitteln den Wert Richtung 50 drückt, wird er wieder auf die übliche Schwankungsbreite gespreizt (Faktor ${String((D.overall_k || {})[mode] ?? 1).slice(0, 4).replace('.', ',')}). Im Score-Fenster kannst du zwischen
+  „Zeitrahmen“ und „Gesamt“ wechseln; die Pfeile im Chart folgen dem angezeigten Score.</p>
   <p><b>Signale:</b> ▲ <b>Kauf</b> beim ersten Eintritt in ≥ ${BUY}. ▼ <b>Verkauf in drei Tranchen</b>: ⅓ bei ≤ ${SELLS[0]},
   ⅔ bei ≤ ${SELLS[1]}, Rest bei ≤ ${SELLS[2]}. Eine neue Runde beginnt erst, wenn der Score wieder ${D.reset} erreicht – so gibt
   es pro Tief nur ein Kaufsignal.</p>${calTxt}
   <p><b>Ehrlichkeit:</b> Jede Kerze nutzt nur Daten bis zu dieser Kerze – alte Signale ändern sich nicht. Die gestrichelten
-  Hoch/Tief-Linien stehen erst im Nachhinein fest und zeigen nur, wie gut der Score getroffen hätte. Kein Indikator kann
+  Hoch/Tief-Linien (Kursumkehr um mindestens die eingestellte Schwelle) und die goldenen ₿-Zyklus-Linien (höchstes und tiefstes
+  Bitcoin-Niveau je Halving-Zyklus) stehen erst im Nachhinein fest und zeigen nur, wie gut der Score getroffen hätte. Kein Indikator kann
   Tiefs sicher vorhersagen. Keine Anlageberatung.</p>`;
   document.querySelectorAll('.expc').forEach(el => el.innerHTML = html);
 }
@@ -1527,6 +1640,50 @@ const closeSheet = () => { $('sheet').classList.remove('open'); if (cur && cur.d
 $('sheetok').addEventListener('click', closeSheet);
 $('sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
 
+// ---------------- Optionen: Linien, Schwelle, Score-Art
+const zArr = T => zsel === 'g' ? (T['zg' + sfx()] || T['z' + sfx()]) : (T['z' + sfx()] || null);
+function syncOpts(){
+  $('tgPiv').classList.toggle('on', showPiv); $('tgCyc').classList.toggle('on', showCyc);
+  $('thrw').style.opacity = showPiv ? 1 : .35; $('thr').value = thrGet(); $('thrv').textContent = thrGet() + ' %';
+  document.querySelectorAll('#zseg button').forEach(b => b.classList.toggle('on', b.dataset.z === zsel));
+}
+$('tgPiv').addEventListener('click', () => { showPiv = !showPiv; store('piv', showPiv ? '1' : '0'); syncOpts(); redraw(); });
+$('tgCyc').addEventListener('click', () => { showCyc = !showCyc; store('cyc', showCyc ? '1' : '0'); syncOpts(); redraw(); });
+$('thr').addEventListener('input', () => { store('thr_' + mode, $('thr').value); $('thrv').textContent = $('thr').value + ' %'; if (G) { G.zz = null; redraw(); } });
+$('zseg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; zsel = b.dataset.z; store('zsel', zsel); show(true); });
+// Signale wie auf dem Server: Kauf = erster Eintritt ≥80 je Runde, Verkauf ⅓/⅔/3/3 bei ≤30/20/10
+function signalsJS(z){
+  const out = [], first = (enter, reset, code) => { let armed = true;
+    for (let i = 0; i < z.length; i++) { const v = z[i]; if (v == null) continue; const p = i ? (z[i - 1] ?? 50) : 50;
+      if (reset(v)) armed = true;
+      if (armed && enter(v, p)) { out.push([i, code]); armed = false; } } };
+  first((v, p) => v >= BUY && p < BUY, v => v <= D.reset, 'B');
+  SELLS.forEach((lv, k) => first((v, p) => v <= lv && p > lv, v => v >= D.reset, 'S' + (k + 1)));
+  return out;
+}
+// Echte Hochs/Tiefs (im Nachhinein): Kursumkehr um mindestens die eingestellte Schwelle
+function zigzag(c, th){
+  const out = []; if (c.length < 3) return out;
+  let dir = 0, hiP = c[0][2], hiI = 0, loP = c[0][3], loI = 0;
+  for (let i = 1; i < c.length; i++) {
+    const h = c[i][2], l = c[i][3];
+    if (dir === 0) {
+      if (h > hiP) { hiP = h; hiI = i; } if (l < loP) { loP = l; loI = i; }
+      if (hiP >= loP * (1 + th) && hiI > loI) { out.push([loI, 'T', loP]); dir = 1; }
+      else if (loP <= hiP * (1 - th) && loI > hiI) { out.push([hiI, 'H', hiP]); dir = -1; }
+    } else if (dir === 1) {
+      if (h > hiP) { hiP = h; hiI = i; }
+      if (l <= hiP * (1 - th)) { out.push([hiI, 'H', hiP]); dir = -1; loP = l; loI = i; }
+    } else {
+      if (l < loP) { loP = l; loI = i; }
+      if (h >= loP * (1 + th)) { out.push([loI, 'T', loP]); dir = 1; hiP = h; hiI = i; }
+    }
+  }
+  return out;
+}
+function idxAt(t){ const c = G.T.c; let lo = 0, hi = c.length - 1; if (t < c[0][0]) return -1;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (c[m][0] <= t) lo = m; else hi = m - 1; } return lo; }
+
 // ---------------- Detail
 function destroy(){ if (G) G.charts.forEach(c => c.chart.remove()); G = null; }
 function closeCoin(){ destroy(); cur = null; $('detail').classList.remove('open'); document.body.style.overflow = ''; }
@@ -1571,12 +1728,14 @@ async function show(keep){
   document.querySelectorAll('#tfc .chip').forEach(b => { b.disabled = !tfs[b.dataset.t]; b.classList.toggle('on', b.dataset.t === ctf); });
   document.querySelectorAll('.mseg button').forEach(b => b.classList.toggle('on', b.dataset.m === mode));
   header();
-  const T = tfs[ctf], Z = T['z' + sfx()], hasZ = !!Z;
-  const s = hasZ ? Z.slice().reverse().find(x => x != null) : null, col = color(s);
-  $('dsc').textContent = s == null ? '–' : Math.round(s); $('dsc').style.color = col; $('dsc').style.background = col + '22';
-  ['fbox', 'catbox', 'pcbox', 'allbox', 'statbox'].forEach(id => $(id).style.display = hasZ && T.b ? '' : 'none');
+  const T = tfs[ctf], Z = zArr(T), hasZ = !!Z, ownZ = !!T['z' + sfx()];
+  const s = mode === 'long' ? cur.meta.gl : cur.meta.g, col = color(s);
+  $('dsc').innerHTML = `<small style="display:block;font-size:9px;font-weight:600;opacity:.8">Gesamt</small>${s == null ? '–' : Math.round(s)}`;
+  $('dsc').style.color = col; $('dsc').style.background = col + '22';
+  ['fbox', 'catbox', 'pcbox', 'allbox', 'statbox'].forEach(id => $(id).style.display = ownZ && T.b ? '' : 'none');
   $('noz').style.display = hasZ ? 'none' : '';
-  if (hasZ && T.b) details(T);
+  syncOpts();
+  if (ownZ && T.b) details(T);
   if (!keep) M = null;
   const ind = await loadInd(T);
   destroy();
@@ -1622,7 +1781,7 @@ function heights(k, hasZ){
   return {price: 320, score: hasZ ? 150 : 0, pane: 105};
 }
 function draw(T, ind){
-  const L = window.LightweightCharts, Z = T['z' + sfx()], hasZ = !!Z, pre = T.pre || 0;
+  const L = window.LightweightCharts, Z = zArr(T), hasZ = !!Z, pre = T.pre || 0;
   const wrap = $('cwrap');
   const list = [{kind: 'price'}];
   if (hasZ) list.push({kind: 'score'});
@@ -1630,10 +1789,12 @@ function draw(T, ind){
   const H = heights(list.length - 1 - (hasZ ? 1 : 0), hasZ);
   wrap.innerHTML = list.map((p, i) => {
     const h = (p.kind === 'price' ? H.price : p.kind === 'score' ? H.score : H.pane) + (i === list.length - 1 ? AXH() : 0);
-    const lab = p.kind === 'ind' ? `<div class="plab" id="plab${i}">${esc(p.name)}</div>` : p.kind === 'score' ? `<div class="plab" id="plab${i}">Score · ${esc(D.modes[mode].label)}</div>` : '';
+    const lab = p.kind === 'ind' ? `<div class="plab" id="plab${i}">${esc(p.name)}</div>` : p.kind === 'score' ? `<div class="plab" id="plab${i}"></div>` : '';
+    const bot = i === list.length - 1 ? AXH() : 0;
     return `<div class="cw" style="height:${h}px"><div class="ch" id="ch${i}" style="height:${h}px"></div>${lab}
       ${p.kind === 'price' ? '<div class="layer" id="ml"></div>' : ''}
-      <div class="touch" data-i="${i}" style="bottom:${i === list.length - 1 ? AXH() : 0}px"></div></div>`;
+      <div class="touch${i ? ' pany' : ''}" data-i="${i}" style="bottom:${bot}px;right:78px"></div>
+      <div class="pscroll" style="bottom:${bot}px"></div></div>`;
   }).join('') + `<div class="layer" id="pvl" style="bottom:${AXH()}px"></div>
     <div class="axt" id="axt" style="height:${AXH()}px"><span>Zeitachse: ziehen = schieben · 2 Finger = zoomen</span></div>`;
   const opt = last => ({
@@ -1662,10 +1823,10 @@ function draw(T, ind){
       series = chart.addCandlestickSeries({upColor: '#22c55e', downColor: '#ef4444', borderVisible: false,
         wickUpColor: '#22c55e', wickDownColor: '#ef4444', priceFormat: {type: 'price', precision: prec, minMove: Math.pow(10, -prec)}});
       series.setData(T.c.map(k => ({time: k[0], open: k[1], high: k[2], low: k[3], close: k[4]})));
-      const sg = T['sg' + sfx()] || [], mk = [];
+      const sg = hasZ ? signalsJS(Z) : [], mk = [];
       const LBL = {B: ['Kauf', '#22c55e', 'belowBar', 'arrowUp', 1.3], S1: ['⅓', '#fb923c', 'aboveBar', 'arrowDown', 0.8],
         S2: ['⅔', '#f87171', 'aboveBar', 'arrowDown', 0.9], S3: ['3/3', '#ef4444', 'aboveBar', 'arrowDown', 1]};
-      sg.forEach(([idx, code]) => { const j = idx + pre; if (j < 0 || j >= n) return; const m = LBL[code];
+      sg.forEach(([j, code]) => { if (j < 0 || j >= n) return; const m = LBL[code];
         mk.push({time: T.c[j][0], position: m[2], color: m[1], shape: m[3], text: m[0], size: m[4]}); });
       mk.sort((a, b) => a.time - b.time);
       series.setMarkers(mk);
@@ -1698,6 +1859,8 @@ function draw(T, ind){
     try {
       const w = Math.max(78, ...G.charts.map(c => c.chart.priceScale('right').width()));
       G.charts.forEach(c => c.chart.applyOptions({rightPriceScale: {minimumWidth: w}}));
+      document.querySelectorAll('#cwrap .touch').forEach(el => el.style.right = w + 'px');
+      document.querySelectorAll('#cwrap .pscroll').forEach(el => el.style.width = w + 'px');
     } catch (e) {}
     redraw(); setTimeout(redraw, 150); setTimeout(redraw, 600);
   });
@@ -1709,7 +1872,7 @@ function labels(i){
   if (!G) return;
   G.charts.forEach(c => { if (c.kind === 'price') return; const el = $('plab' + c.i); if (!el) return;
     const v = c.vals ? c.vals[Math.max(0, Math.min(G.n - 1, i))] : null;
-    el.innerHTML = (c.kind === 'score' ? `Score · ${esc(D.modes[mode].label)}` : esc(c.name)) + ` <b>${c.kind === 'score' ? (v == null ? '–' : Math.round(v)) : num(v)}</b>`; });
+    el.innerHTML = (c.kind === 'score' ? `${zsel === 'g' ? 'Gesamt-Score' : 'Score ' + TFL[ctf]} · ${esc(D.modes[mode].label)}` : esc(c.name)) + ` <b>${c.kind === 'score' ? (v == null ? '–' : Math.round(v)) : num(v)}</b>`; });
 }
 
 // ---------------- Ansicht: Schieben und Zoomen auf der Zeitachse
@@ -1733,17 +1896,33 @@ function applyView(){
 $('now').addEventListener('click', () => { if (!G) return; view.to = G.n - 1 + 4; clampView(); applyView(); });
 function cap(el, e){ try { el.setPointerCapture(e.pointerId); } catch (x) {} }
 
-// ---------------- Hoch/Tief-Linien – dauerhaft, durchgehend durch alle Fenster
+// ---------------- Hoch/Tief-Linien mit Preis + goldene Bitcoin-Zyklus-Linien
 function drawPiv(){
   const el = $('pvl'); if (!el) return; el.innerHTML = '';
-  const P = G && G.T['p' + sfx()]; if (!P) return;
-  const ts = G.pc.timeScale(), lines = [];
-  for (const [t, k] of P) {
-    const x = ts.timeToCoordinate(t); if (x == null) continue;
-    lines.push(`<div class="vl" style="left:${x}px;border-color:${k === 'H' ? 'rgba(239,68,68,.6)' : 'rgba(34,197,94,.6)'}"></div>`);
-    if (lines.length > 400) break;
+  if (!G) return;
+  const ts = G.pc.timeScale(), out = [], W = $('cwrap').clientWidth;
+  if (showPiv) {
+    if (!G.zz) G.zz = zigzag(G.T.c, thrGet() / 100);
+    $('thrv').textContent = thrGet() + ' % · ' + G.zz.length;
+    let lastX = {H: -1e9, T: -1e9};
+    for (const [i, k, p] of G.zz) {
+      const x = ts.logicalToCoordinate(i); if (x == null || x < -2 || x > W) continue;
+      const col = k === 'H' ? 'rgba(239,68,68,.65)' : 'rgba(34,197,94,.65)';
+      out.push(`<div class="vl" style="left:${x}px;border-color:${col}"></div>`);
+      const y = G.cs.priceToCoordinate(p);
+      if (y != null && x - lastX[k] > 58) {
+        lastX[k] = x;
+        out.push(`<div class="ptag ${k}" style="left:${x}px;top:${k === 'H' ? y - 18 : y + 4}px">${price(p)}</div>`);
+      }
+    }
   }
-  el.innerHTML = lines.join('');
+  if (showCyc && D.btcc) for (const [t, k, p, ok] of D.btcc) {
+    const i = idxAt(t); if (i < 0) continue;
+    const x = ts.logicalToCoordinate(i); if (x == null || x < -2 || x > W) continue;
+    const d = new Date(t * 1000), lab = `₿-Zyklus-${k === 'H' ? 'Hoch' : 'Tief'} ${d.getMonth() + 1}/${d.getFullYear()}${ok ? '' : ' (bisher)'}`;
+    out.push(`<div class="vl cyc" style="left:${x}px"></div><div class="ctag" style="left:${x}px">${lab}<br>${price(p)}</div>`);
+  }
+  el.innerHTML = out.join('');
 }
 
 // ---------------- Messen: 1 Finger = Start fest, Ende folgt; 2 Finger = jeder Finger hält einen Punkt
@@ -1785,9 +1964,14 @@ function drawM(){
       html += `<div class="rect" style="left:${Math.min(pa.x, pb.x)}px;top:${Math.min(pa.y, pb.y)}px;width:${Math.abs(pb.x - pa.x)}px;height:${Math.abs(pb.y - pa.y)}px;border-color:${col};background:${col}22"></div>
         <div class="dot" style="left:${pa.x}px;top:${pa.y}px;background:#60a5fa"></div><div class="dot" style="left:${pb.x}px;top:${pb.y}px;background:${col}"></div>`;
     res = `<b style="color:${col}">${pct(pc_)}</b> (${dp >= 0 ? '+' : '−'}${price(Math.abs(dp))}) · ${bars} Kerzen · ${d}`;
-    if (pa.x != null && pb.x != null) {
-      const cx = Math.min(Math.max((pa.x + pb.x) / 2, 95), W - 95), top = Math.max(64, Math.min(pa.y ?? 0, pb.y ?? 0) - 14);
-      html += `<div class="bub" style="left:${cx}px;top:${top}px"><b style="color:${col}">${pct(pc_)}</b> · ${d}<br>${price(lo.p)} → ${price(hi.p)}<br>${fmtDate(timeOf(lo.l))} → ${fmtDate(timeOf(hi.l))}</div>`;
+    const H0 = $('ch0').clientHeight;
+    const tag = (q, P, c2) => { if (P.x == null || P.y == null) return '';
+      const above = P.y > 60, left = Math.min(Math.max(P.x, 64), W - 64);
+      return `<div class="bub sm" style="left:${left}px;top:${above ? P.y - 10 : P.y + 54}px;border-color:${c2}"><b>${price(q.p)}</b><br>${fmtDate(timeOf(q.l))}</div>`; };
+    html += tag(M.a, pa, '#60a5fa') + tag(B, pb, col);
+    if (pa.x != null && pb.x != null && pa.y != null && pb.y != null) {
+      const cx = Math.min(Math.max((pa.x + pb.x) / 2, 70), W - 70), cy = Math.min(Math.max((pa.y + pb.y) / 2 + 14, 30), H0 - 10);
+      html += `<div class="bub mid" style="left:${cx}px;top:${cy}px;border-color:${col}"><b style="color:${col}">${pct(pc_)}</b><br>${d}</div>`;
     }
   } else if (pb.x != null && pb.y != null) {
     const top = Math.max(52, pb.y - 18), left = Math.min(Math.max(pb.x, 70), W - 70);
@@ -1827,7 +2011,7 @@ function bindTouch(){
         const v = c.vals ? c.vals[j] : null;
         $('mres').innerHTML = `<span style="color:var(--acc)">${c.kind === 'score' ? 'Score ' + (v == null ? '–' : Math.round(v)) : esc(c.name) + ' ' + num(v)}</span> · ${fmtDate(G.T.c[j][0])}`;
       };
-      el.addEventListener('pointerdown', e => { e.preventDefault(); cap(el, e); mv(e); });
+      el.addEventListener('pointerdown', e => mv(e));
       el.addEventListener('pointermove', e => { if (e.buttons || e.pointerType !== 'mouse') mv(e); });
     }
   });
@@ -1857,7 +2041,7 @@ let rsT = null;
 window.addEventListener('resize', () => { clearTimeout(rsT); rsT = setTimeout(() => { if (cur && cur.data) { header(); show(true); } }, 200); });
 
 document.querySelectorAll('.mseg button').forEach(b => b.classList.toggle('on', b.dataset.m === mode));
-setLtf(D.ltfs.includes(ltf) ? ltf : '4h');
+setLtf(ltf === 'g' || D.ltfs.includes(ltf) ? ltf : 'g');
 explain();
 const h0 = decodeURIComponent(location.hash.slice(1));
 if (h0) openCoin(h0);
