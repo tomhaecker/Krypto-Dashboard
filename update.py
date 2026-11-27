@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Krypto-Dashboard v3 – läuft automatisch über GitHub Actions (stündlich).
+Krypto-Dashboard v4 – läuft automatisch über GitHub Actions (stündlich).
 
 Ablauf:
 1. Top-Coins nach Marktkapitalisierung (CoinGecko, Ersatz CoinPaprika), ohne Stablecoins/Wrapped.
@@ -101,7 +101,7 @@ WRAPPED_SYMBOLS = {
 NAME_SKIP = ("wrapped", "staked", "bridged", "restaked", "liquid staking", "tokenized", "bitcoin bep2")
 
 SESSION = requests.Session()
-SESSION.headers["User-Agent"] = "krypto-dashboard/3.0 (+github-actions)"
+SESSION.headers["User-Agent"] = "krypto-dashboard/4.0 (+github-actions)"
 BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
@@ -978,17 +978,21 @@ padding:calc(10px + env(safe-area-inset-top)) 12px 8px;border-bottom:1px solid v
 .dh .t{flex:1;min-width:0}.dh .t b{font-size:16px}.dh .t div{font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .box{margin:10px;background:var(--card);border-radius:16px;padding:10px 6px 6px;position:relative}
 .box h3{font-size:13px;margin:2px 8px 6px;color:var(--mut);font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:8px}
-.legend{font-size:11.5px;color:var(--mut);margin:0 8px 2px;min-height:16px}
-.mres{margin:2px 8px 4px;font-size:13px;min-height:19px;color:var(--mut)}
+.mres{margin:2px 8px 6px;font-size:13px;height:20px;line-height:20px;color:var(--mut);white-space:nowrap;overflow:hidden;
+text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 .mres b{font-size:14px}
 .cw{position:relative;touch-action:none;user-select:none;-webkit-user-select:none}
-#pc{height:330px}#zc{height:160px}
+.cwrap{position:relative}
+#pc{height:330px}#zc{height:194px}
+.axt{position:absolute;left:0;right:0;bottom:0;height:44px;z-index:5;touch-action:none;
+background:linear-gradient(transparent,rgba(96,165,250,.07));border-top:1px solid rgba(96,165,250,.25)}
+.axt span{position:absolute;right:8px;bottom:2px;font-size:9.5px;color:#60a5fa99;pointer-events:none}
 .layer{position:absolute;inset:0;pointer-events:none;overflow:hidden}
 .touch{position:absolute;inset:0;z-index:4;touch-action:none}
 .vl{position:absolute;top:0;bottom:0;width:0;border-left:1px dashed}
 .rect{position:absolute;border:1px solid}
 .dot{position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;border:2px solid #fff}
-.bub{position:absolute;transform:translate(-50%,-100%);background:#0b0e14ee;border:1px solid var(--line);border-radius:10px;
+.bub{font-variant-numeric:tabular-nums;position:absolute;transform:translate(-50%,-100%);background:#0b0e14ee;border:1px solid var(--line);border-radius:10px;
 padding:5px 9px;font-size:12px;white-space:nowrap;line-height:1.35;text-align:center;box-shadow:0 4px 14px #0008}
 .bub b{font-size:14px}
 .ctrl{display:flex;align-items:center;gap:10px;margin:10px 8px 4px;font-size:12px;color:var(--mut)}
@@ -1054,16 +1058,16 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
     </div>
     <div class="chips" id="tfc"></div>
   </div>
-  <div class="box"><h3><span>Kurs · im Chart wischen = messen</span>
-    <button class="chip sm" id="pivbtn">Hochs/Tiefs</button></h3>
-    <div class="legend" id="pl"></div>
+  <div class="box"><h3><span>Chart wischen = messen (1–2 Finger)</span>
+    <button class="chip sm" id="now">Jetzt ⇥</button></h3>
     <div class="mres" id="mres"></div>
-    <div class="cw" id="pcw"><div id="pc"></div><div class="layer" id="pvl"></div><div class="layer" id="ml"></div><div class="touch" id="ptouch"></div></div>
-    <div class="cw" id="zcw" style="margin-top:6px"><div id="zc"></div><div class="layer" id="zvl"></div><div class="touch" id="ztouch"></div></div>
+    <div class="cwrap" id="cwrap">
+      <div class="cw" id="pcw"><div id="pc"></div><div class="layer" id="ml"></div><div class="touch" id="ptouch"></div></div>
+      <div class="cw" id="zcw"><div id="zc"></div><div class="touch" id="ztouch"></div></div>
+      <div class="layer" id="pvl"></div>
+      <div class="axt" id="axt"><span>Zeitachse: ziehen = schieben · 2 Finger = zoomen</span></div>
+    </div>
     <div class="msg" id="noz" style="display:none">Für diesen Zeitrahmen gibt es zu wenige Kerzen für einen Score.</div>
-    <div class="ctrl"><span>🔍 Zoom</span><input type="range" id="zoom" min="0" max="1000" value="500"><span class="zl" id="zl"></span></div>
-    <div class="ctrl" style="margin-top:0"><span>⟵ Leiste ziehen = verschieben ⟶</span><span style="flex:1"></span><button class="now" id="now">Jetzt ⇥</button></div>
-    <div class="nav" id="nav"><canvas id="navc"></canvas><div class="navw" id="navw"></div></div>
   </div>
   <div class="sec" id="fbox"><h4>Filter</h4><div class="grid2" id="filt"></div></div>
   <div class="sec" id="statbox"><h4>Bilanz der Signale (gesamte Historie)</h4><div class="grid2" id="stat"></div></div>
@@ -1075,7 +1079,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
   <div class="sec" id="allbox"><details><summary>Alle Indikatoren</summary><table id="all"></table></details></div>
   <div class="sec exp"><details><summary>Wie entsteht der Score?</summary><div class="expc"></div></details></div>
   <p class="note">▲ Kauf / ▼ Verkauf = erste Kerze, mit der der Score in die Zone eintritt. Der Score nutzt nur Daten bis zur
-  jeweiligen Kerze. Gestrichelte Linien = echte Hochs (rot) und Tiefs (grün), die erst im Nachhinein feststehen.
+  jeweiligen Kerze. Senkrechte gestrichelte Linien = echte Hochs (rot) und Tiefs (grün), die erst im Nachhinein feststehen.
   Datenquelle: <span id="src"></span>. Keine Anlageberatung.</p>
 </div>
 
@@ -1090,7 +1094,6 @@ const SEC = {'1h':3600,'4h':14400,'1d':86400,'5d':432000,'1w':604800,'2w':120960
 const $ = id => document.getElementById(id);
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
 let filter = 'all', query = '', ltf = store('ltf') || '4h', ctf = store('ctf') || '4h', sortBy = store('sort') || 'mc';
-let showPiv = store('piv') !== '0';
 let cur = null, G = null, view = null, liveTs = 0, liveMap = null, reqId = 0, loadingOld = false;
 const cache = {};
 
@@ -1271,7 +1274,7 @@ async function liveChart(){
     header();
     if (atEnd) view.to = T.c.length - 1 + 4;
     show(true);
-  } catch (e) { $('pl').textContent = 'Live-Kerzen für ' + meta.s + ' nicht bei Binance verfügbar.'; }
+  } catch (e) { $('mres').textContent = 'Live-Kerzen für ' + meta.s + ' nicht bei Binance verfügbar.'; }
 }
 async function loadOlder(){
   const T = cur && cur.data.tf[ctf];
@@ -1296,7 +1299,6 @@ function destroy(){ if (G){ G.pc.remove(); if (G.zc) G.zc.remove(); } G = null; 
 function closeCoin(){ destroy(); cur = null; $('detail').classList.remove('open'); document.body.style.overflow = ''; }
 $('tfc').innerHTML = D.tfs.map(([k, l]) => `<button class="chip" data-t="${k}">${l}</button>`).join('');
 $('tfc').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b && !b.disabled) { ctf = b.dataset.t; store('ctf', ctf); view = null; M = null; show(); } });
-$('pivbtn').addEventListener('click', () => { showPiv = !showPiv; store('piv', showPiv ? '1' : '0'); show(true); });
 
 function header(){
   const meta = cur.meta;
@@ -1307,7 +1309,7 @@ async function openCoin(sym){
   const meta = D.coins.find(x => x.s === sym); if (!meta) return closeCoin();
   destroy(); view = null; M = null;
   $('detail').classList.add('open'); $('detail').scrollTop = 0; document.body.style.overflow = 'hidden';
-  cur = {meta, data: null}; header(); $('src').textContent = meta.src; $('pl').textContent = 'Lade Daten…';
+  cur = {meta, data: null}; header(); $('src').textContent = meta.src; $('mres').textContent = 'Lade Daten…';
   const id = ++reqId;
   try {
     if (!cache[meta.f]) {
@@ -1315,7 +1317,7 @@ async function openCoin(sym){
       if (!r.ok) throw new Error(r.status);
       cache[meta.f] = await r.json();
     }
-  } catch (e) { if (id === reqId) $('pl').textContent = 'Daten konnten nicht geladen werden.'; return; }
+  } catch (e) { if (id === reqId) $('mres').textContent = 'Daten konnten nicht geladen werden.'; return; }
   if (id !== reqId) return;
   cur.data = cache[meta.f];
   show();
@@ -1327,7 +1329,6 @@ function show(keep){
   const tfs = cur.data.tf;
   if (!tfs[ctf]) ctf = tfs['4h'] ? '4h' : Object.keys(tfs)[0];
   document.querySelectorAll('#tfc .chip').forEach(b => { b.disabled = !tfs[b.dataset.t]; b.classList.toggle('on', b.dataset.t === ctf); });
-  $('pivbtn').classList.toggle('on', showPiv);
   const T = tfs[ctf], hasZ = !!T.z;
   const s = hasZ ? T.z.slice().reverse().find(x => x != null) : null, col = color(s);
   $('dsc').textContent = s == null ? '–' : Math.round(s); $('dsc').style.color = col; $('dsc').style.background = col + '22';
@@ -1362,15 +1363,17 @@ function details(T){
      <td class="v">${esc(x[3])}</td><td class="v"><span class="mini"><i style="width:${x[2]}%;background:${color(x[2])}"></i></span> <b style="color:${color(x[2])}">${x[2]}</b></td></tr>`).join('')).join('');
 }
 
+const AX = 44;   // Höhe der Zeitachse (zum Schieben/Zoomen)
 function draw(T){
   const L = window.LightweightCharts;
+  const hasZ = !!T.z;
   const base = {
     autoSize: true, handleScroll: false, handleScale: false,
     layout: {background: {type: 'solid', color: '#131821'}, textColor: '#8b93a5', fontSize: 11},
     grid: {vertLines: {color: '#1c2230'}, horzLines: {color: '#1c2230'}},
     rightPriceScale: {borderColor: '#242b38', minimumWidth: 78},
     timeScale: {borderColor: '#242b38', timeVisible: !big(), secondsVisible: false, rightOffset: 0, minBarSpacing: 0.05,
-      fixLeftEdge: false, fixRightEdge: false, lockVisibleTimeRangeOnResize: true,
+      minimumHeight: AX, lockVisibleTimeRangeOnResize: true,
       tickMarkFormatter: (t, type) => { const d = new Date(t * 1000);
         if (type === 0) return String(d.getFullYear());
         if (type === 1) return d.toLocaleDateString('de-DE', {month: 'short'});
@@ -1380,21 +1383,25 @@ function draw(T){
       horzLine: {color: '#60a5fa', labelBackgroundColor: '#2563eb'}},
     localization: {locale: 'de-DE', timeFormatter: t => fmtDate(t)},
   };
+  // Mit Score-Chart: Zeitachse nur ganz unten, damit die Hoch/Tief-Linien ohne Lücke durchlaufen
+  $('pc').style.height = hasZ ? '330px' : (330 + AX) + 'px';
+  $('ptouch').style.bottom = hasZ ? '0' : AX + 'px';
+  $('ztouch').style.bottom = AX + 'px';
   const n = T.c.length, last = T.c[n - 1][4];
   const prec = last >= 1000 ? 2 : last >= 1 ? 3 : last >= 0.01 ? 5 : 8;
-  const pc = L.createChart($('pc'), base);
+  const pc = L.createChart($('pc'), Object.assign({}, base, {timeScale: Object.assign({}, base.timeScale, {visible: !hasZ})}));
   const cs = pc.addCandlestickSeries({upColor: '#22c55e', downColor: '#ef4444', borderVisible: false,
     wickUpColor: '#22c55e', wickDownColor: '#ef4444', priceFormat: {type: 'price', precision: prec, minMove: Math.pow(10, -prec)}});
   cs.setData(T.c.map(k => ({time: k[0], open: k[1], high: k[2], low: k[3], close: k[4]})));
   const markers = [];
-  if (T.z) for (let i = 1; i < T.z.length; i++){
+  if (hasZ) for (let i = 1; i < T.z.length; i++){
     const s = T.z[i], p = T.z[i - 1]; if (s == null) continue;
     if (s >= BUY && (p == null || p < BUY)) markers.push({time: T.c[i][0], position: 'belowBar', color: '#22c55e', shape: 'arrowUp', text: 'Kauf'});
     if (s <= SELL && (p == null || p > SELL)) markers.push({time: T.c[i][0], position: 'aboveBar', color: '#ef4444', shape: 'arrowDown', text: 'Verkauf'});
   }
   cs.setMarkers(markers);
   let zc = null, zs = null;
-  if (T.z){
+  if (hasZ){
     zc = L.createChart($('zc'), base);
     zs = zc.addBaselineSeries({baseValue: {type: 'price', price: 50}, lineWidth: 2,
       topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,.28)', topFillColor2: 'rgba(34,197,94,.02)',
@@ -1408,12 +1415,25 @@ function draw(T){
   }
   G = {pc, cs, zc, zs, T, n};
   if (!view) view = {bars: Math.min(n, big() ? 150 : 120), to: n - 1 + 4};
-  clampView(); applyView(); navDraw(); legend(n - 1);
+  clampView(); applyView();
+  // Preisachsen beider Charts gleich breit machen, damit die Linien exakt übereinander liegen
+  requestAnimationFrame(() => {
+    if (!G || !G.zc) return;
+    try {
+      const w = Math.max(G.pc.priceScale('right').width(), G.zc.priceScale('right').width(), 78);
+      G.pc.applyOptions({rightPriceScale: {minimumWidth: w}}); G.zc.applyOptions({rightPriceScale: {minimumWidth: w}});
+      requestAnimationFrame(() => { drawPiv(); drawM(); });
+    } catch (e) {}
+  });
 }
 
-// ---------------- Ansicht: Zoom-Regler + Schiebeleiste
+// ---------------- Ansicht: Schieben und Zoomen auf der Zeitachse
 const MINB = 10;
 const maxBars = () => Math.max(MINB + 1, G.n + 8);
+function plotWidth(){
+  let w = 78; try { w = G.pc.priceScale('right').width(); } catch (e) {}
+  return Math.max(50, $('pc').clientWidth - w);
+}
 function clampView(){
   view.bars = Math.max(MINB, Math.min(maxBars(), view.bars));
   view.to = Math.min(G.n - 1 + 8, Math.max(Math.min(view.bars - 1, G.n + 7), view.to));
@@ -1422,68 +1442,57 @@ function applyView(){
   if (!G) return;
   const r = {from: view.to - view.bars, to: view.to};
   G.pc.timeScale().setVisibleLogicalRange(r); if (G.zc) G.zc.timeScale().setVisibleLogicalRange(r);
-  const v = (Math.log(view.bars) - Math.log(MINB)) / (Math.log(maxBars()) - Math.log(MINB));
-  $('zoom').value = Math.round(v * 1000);
-  $('zl').textContent = Math.round(view.bars) + ' Kerzen';
-  navWin();
   requestAnimationFrame(() => { drawPiv(); drawM(); });
   if (view.to - view.bars < 15) loadOlder();
 }
-$('zoom').addEventListener('input', () => {
-  if (!G) return;
-  const v = +$('zoom').value / 1000;
-  view.bars = Math.exp(Math.log(MINB) + (Math.log(maxBars()) - Math.log(MINB)) * v);
-  clampView(); applyView();
-});
 $('now').addEventListener('click', () => { if (!G) return; view.to = G.n - 1 + 4; clampView(); applyView(); });
-function navDraw(){
-  const cv = $('navc'), w = cv.clientWidth, h = cv.clientHeight, dpr = window.devicePixelRatio || 1;
-  cv.width = w * dpr; cv.height = h * dpr;
-  const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
-  const c = G.T.c.map(k => Math.log(k[4])), lo = Math.min(...c), hi = Math.max(...c), n = c.length;
-  ctx.beginPath();
-  c.forEach((v, i) => { const x = i / (n - 1) * w, y = h - 14 - (v - lo) / ((hi - lo) || 1) * (h - 20); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-  ctx.strokeStyle = '#60a5fa99'; ctx.lineWidth = 1.2; ctx.stroke();
-  ctx.fillStyle = '#8b93a5'; ctx.font = '10px sans-serif';
-  ctx.fillText(new Date(G.T.c[0][0] * 1000).getFullYear(), 4, h - 3);
-  const tx = String(new Date(G.T.c[n - 1][0] * 1000).getFullYear()); ctx.fillText(tx, w - ctx.measureText(tx).width - 4, h - 3);
-}
-function navWin(){
-  const w = $('nav').clientWidth, n = G.n;
-  const a = Math.max(0, (view.to - view.bars) / n), b = Math.min(1, view.to / n);
-  const el = $('navw'); el.style.left = (a * w) + 'px'; el.style.width = Math.max(6, (b - a) * w) + 'px';
-}
-let navDrag = null;
 function cap(el, e){ try { el.setPointerCapture(e.pointerId); } catch (x) {} }
-$('nav').addEventListener('pointerdown', e => { if (!G) return; cap($('nav'), e); navDrag = {x: e.clientX, to: view.to}; e.preventDefault(); });
-$('nav').addEventListener('pointermove', e => {
-  if (!navDrag || !G) return;
-  const w = Math.max(50, $('pc').clientWidth - 78);
-  view.to = navDrag.to - (e.clientX - navDrag.x) * view.bars / w;
-  clampView(); applyView();
+const ax = $('axt'), axP = new Map();
+let axStart = null;
+function axBegin(){
+  const pts = [...axP.values()], r = $('pc').getBoundingClientRect();
+  if (!pts.length) { axStart = null; return; }
+  const mx = pts.reduce((a, p) => a + p.x, 0) / pts.length - r.left;
+  axStart = {to: view.to, bars: view.bars, mx, d: pts.length > 1 ? Math.abs(pts[0].x - pts[1].x) : 0, n: pts.length};
+}
+ax.addEventListener('pointerdown', e => { if (!G) return; e.preventDefault(); cap(ax, e); axP.set(e.pointerId, {x: e.clientX}); axBegin(); });
+ax.addEventListener('pointermove', e => {
+  if (!G || !axStart || !axP.has(e.pointerId)) return;
+  axP.set(e.pointerId, {x: e.clientX});
+  const pts = [...axP.values()], r = $('pc').getBoundingClientRect(), W = plotWidth();
+  const mx = pts.reduce((a, p) => a + p.x, 0) / pts.length - r.left;
+  let bars = axStart.bars;
+  if (axStart.n > 1 && pts.length > 1) {
+    const d = Math.abs(pts[0].x - pts[1].x);
+    if (axStart.d > 10 && d > 10) bars = axStart.bars * axStart.d / d;
+  }
+  // Der Punkt unter den Fingern bleibt unter den Fingern (wie beim Chart selbst)
+  const fromStart = axStart.to - axStart.bars, anchor = fromStart + axStart.mx / W * axStart.bars;
+  bars = Math.max(MINB, Math.min(maxBars(), bars));
+  const from = anchor - mx / W * bars;
+  view.bars = bars; view.to = from + bars; clampView(); applyView();
 });
-['pointerup', 'pointercancel'].forEach(ev => $('nav').addEventListener(ev, () => navDrag = null));
-window.addEventListener('resize', () => { if (G) { navDraw(); applyView(); } });
+['pointerup', 'pointercancel'].forEach(ev => ax.addEventListener(ev, e => { axP.delete(e.pointerId); axBegin(); }));
+ax.addEventListener('wheel', e => { if (!G) return; e.preventDefault(); view.bars *= e.deltaY > 0 ? 1.15 : 0.87; clampView(); applyView(); }, {passive: false});
+window.addEventListener('resize', () => { if (G) applyView(); });
 
-// ---------------- Hoch/Tief-Linien durch beide Charts
+// ---------------- Hoch/Tief-Linien – dauerhaft, durchgehend durch Kurs- und Score-Chart
 function drawPiv(){
-  ['pvl', 'zvl'].forEach(id => $(id).innerHTML = '');
-  if (!G || !showPiv || !G.T.p) return;
+  const el = $('pvl'); el.innerHTML = '';
+  if (!G || !G.T.p) return;
+  el.style.bottom = AX + 'px';
   const ts = G.pc.timeScale(), lines = [];
-  G.T.p.forEach(([t, k]) => { const x = ts.timeToCoordinate(t); if (x == null) return;
-    lines.push(`<div class="vl" style="left:${x}px;border-color:${k === 'H' ? 'rgba(239,68,68,.55)' : 'rgba(34,197,94,.55)'}"></div>`); });
-  if (lines.length > 400) return;
-  $('pvl').innerHTML = lines.join(''); if (G.zc) $('zvl').innerHTML = lines.join('');
+  for (const [t, k] of G.T.p) {
+    const x = ts.timeToCoordinate(t); if (x == null) continue;
+    lines.push(`<div class="vl" style="left:${x}px;border-color:${k === 'H' ? 'rgba(239,68,68,.55)' : 'rgba(34,197,94,.55)'}"></div>`);
+    if (lines.length > 400) break;
+  }
+  el.innerHTML = lines.join('');
 }
 
-// ---------------- Messen per Wischen + Preis/Datum beim Antippen
+// ---------------- Messen: 1 Finger = Start fest, Ende folgt; 2 Finger = jeder Finger hält einen Punkt
 let M = null;
-function legend(i){
-  if (!G) return; const T = G.T; i = Math.max(0, Math.min(G.n - 1, i));
-  const k = T.c[i], s = T.z ? T.z[i] : null;
-  $('pl').innerHTML = `<b style="color:var(--txt)">${fmtDate(k[0])}</b> · O ${k[1]} H ${k[2]} L ${k[3]} C ${k[4]}` +
-    (s != null ? ` · <b style="color:${color(s)}">Score ${Math.round(s)}</b>` : '');
-}
+const fingers = new Map();   // pointerId -> 'a' | 'b'
 function timeOf(l){
   if (l >= 0 && l < G.n) return G.T.c[Math.round(l)][0];
   const step = SEC[ctf];
@@ -1497,31 +1506,30 @@ function pointAt(e){
 }
 function drawM(){
   const layer = $('ml'); layer.innerHTML = '';
-  if (!G || !M) { if (G) { G.pc.clearCrosshairPosition(); if (G.zc) G.zc.clearCrosshairPosition(); } $('mres').innerHTML = ''; return; }
+  if (!G || !M) { if (G) { G.pc.clearCrosshairPosition(); if (G.zc) G.zc.clearCrosshairPosition(); } return; }
   const ts = G.pc.timeScale(), pos = q => ({x: ts.logicalToCoordinate(q.l), y: G.cs.priceToCoordinate(q.p)});
   const B = M.b, idx = Math.max(0, Math.min(G.n - 1, B.l)), inData = B.l >= 0 && B.l < G.n;
   if (inData) {
     G.pc.setCrosshairPosition(B.p, G.T.c[idx][0], G.cs);
     if (G.zc && G.T.z[idx] != null) G.zc.setCrosshairPosition(G.T.z[idx], G.T.c[idx][0], G.zs); else if (G.zc) G.zc.clearCrosshairPosition();
-    legend(idx);
   } else G.pc.clearCrosshairPosition();
-  const pb = pos(B); let html = '', res = '';
+  const pb = pos(B), W = $('pc').clientWidth; let html = '', res = '';
   if (M.moved) {
-    const pa = pos(M.a), up = B.p >= M.a.p, col = up ? '#22c55e' : '#ef4444';
-    const dp = B.p - M.a.p, pc_ = dp / M.a.p * 100, bars = B.l - M.a.l, d = dur(bars * SEC[ctf]);
+    const pa = pos(M.a), lo = M.a.l <= B.l ? M.a : B, hi = M.a.l <= B.l ? B : M.a;
+    const up = hi.p >= lo.p, col = up ? '#22c55e' : '#ef4444';
+    const dp = hi.p - lo.p, pc_ = dp / lo.p * 100, bars = hi.l - lo.l, d = dur(bars * SEC[ctf]);
     if (pa.x != null && pb.x != null && pa.y != null && pb.y != null)
       html += `<div class="rect" style="left:${Math.min(pa.x, pb.x)}px;top:${Math.min(pa.y, pb.y)}px;width:${Math.abs(pb.x - pa.x)}px;height:${Math.abs(pb.y - pa.y)}px;border-color:${col};background:${col}22"></div>
-        <div class="dot" style="left:${pa.x}px;top:${pa.y}px;background:#60a5fa"></div>`;
-    res = `<b style="color:${col}">${pct(pc_)}</b> (${dp >= 0 ? '+' : '−'}${price(Math.abs(dp))}) · <b style="color:var(--txt)">${Math.abs(bars)}</b> Kerzen · ${d}`;
-    if (pb.x != null && pb.y != null) {
-      const top = Math.max(70, pb.y - 18), left = Math.min(Math.max(pb.x, 80), $('pc').clientWidth - 80);
-      html += `<div class="dot" style="left:${pb.x}px;top:${pb.y}px;background:${col}"></div>
-        <div class="bub" style="left:${left}px;top:${top}px"><b style="color:${col}">${pct(pc_)}</b> · ${d}<br>${price(B.p)} · ${fmtDate(timeOf(B.l))}</div>`;
+        <div class="dot" style="left:${pa.x}px;top:${pa.y}px;background:#60a5fa"></div><div class="dot" style="left:${pb.x}px;top:${pb.y}px;background:${col}"></div>`;
+    res = `<b style="color:${col}">${pct(pc_)}</b> (${dp >= 0 ? '+' : '−'}${price(Math.abs(dp))}) · ${bars} Kerzen · ${d}`;
+    if (pa.x != null && pb.x != null) {
+      const cx = Math.min(Math.max((pa.x + pb.x) / 2, 90), W - 90), top = Math.max(64, Math.min(pa.y ?? 0, pb.y ?? 0) - 14);
+      html += `<div class="bub" style="left:${cx}px;top:${top}px"><b style="color:${col}">${pct(pc_)}</b> · ${d}<br>${price(lo.p)} → ${price(hi.p)}<br>${fmtDate(timeOf(lo.l))} → ${fmtDate(timeOf(hi.l))}</div>`;
     }
   } else if (pb.x != null && pb.y != null) {
-    const top = Math.max(52, pb.y - 18), left = Math.min(Math.max(pb.x, 70), $('pc').clientWidth - 70);
+    const top = Math.max(52, pb.y - 18), left = Math.min(Math.max(pb.x, 70), W - 70);
     html += `<div class="bub" style="left:${left}px;top:${top}px"><b>${price(B.p)}</b><br>${fmtDate(timeOf(B.l))}</div>`;
-    res = `<span style="color:var(--acc)">${price(B.p)} · ${fmtDate(timeOf(B.l))}</span> · zum Messen wischen`;
+    res = `<span style="color:var(--acc)">${price(B.p)} · ${fmtDate(timeOf(B.l))}</span>`;
   }
   layer.innerHTML = html; $('mres').innerHTML = res;
 }
@@ -1529,22 +1537,31 @@ const pt = $('ptouch');
 pt.addEventListener('pointerdown', e => {
   if (!G) return; e.preventDefault(); cap(pt, e);
   const q = pointAt(e); if (!q) return;
-  M = {a: q, b: q, down: true, moved: false, x0: e.clientX, y0: e.clientY}; drawM();
+  if (fingers.size === 0 || !M) {             // neuer Messvorgang
+    fingers.clear(); fingers.set(e.pointerId, 'b');
+    M = {a: q, b: q, moved: false, x0: e.clientX, y0: e.clientY};
+  } else if (fingers.size === 1) {            // zweiter Finger übernimmt den Startpunkt
+    fingers.set(e.pointerId, 'a'); M.a = q; M.moved = true;
+  }
+  drawM();
 });
 pt.addEventListener('pointermove', e => {
   if (!G) return;
   const q = pointAt(e); if (!q) return;
-  if (!M || !M.down) { if (e.pointerType === 'mouse') { M = {a: q, b: q, down: false, moved: false, hover: true}; drawM(); } return; }
-  M.b = q; if (Math.hypot(e.clientX - M.x0, e.clientY - M.y0) > 8) M.moved = true; drawM();
+  const role = fingers.get(e.pointerId);
+  if (!role) { if (e.pointerType === 'mouse' && fingers.size === 0) { M = {a: q, b: q, moved: false, hover: true}; drawM(); } return; }
+  M[role] = q;
+  if (!M.moved && Math.hypot(e.clientX - M.x0, e.clientY - M.y0) > 8) M.moved = true;
+  drawM();
 });
-['pointerup', 'pointercancel'].forEach(ev => pt.addEventListener(ev, () => { if (M) M.down = false; }));
-pt.addEventListener('pointerleave', e => { if (M && M.hover) { M = null; drawM(); } });
+['pointerup', 'pointercancel'].forEach(ev => pt.addEventListener(ev, e => fingers.delete(e.pointerId)));
+pt.addEventListener('pointerleave', () => { if (M && M.hover) { M = null; drawM(); $('mres').innerHTML = ''; } });
 const zt = $('ztouch');
 function zMove(e){
   if (!G || !G.zc) return;
   const r = $('zc').getBoundingClientRect(), l = G.zc.timeScale().coordinateToLogical(e.clientX - r.left);
   if (l == null) return; const i = Math.max(0, Math.min(G.n - 1, Math.round(l)));
-  M = null; drawM(); legend(i);
+  M = null; drawM();
   if (G.T.z[i] != null) G.zc.setCrosshairPosition(G.T.z[i], G.T.c[i][0], G.zs);
   G.pc.setCrosshairPosition(G.T.c[i][4], G.T.c[i][0], G.cs);
   $('mres').innerHTML = G.T.z[i] != null ? `<span style="color:${color(G.T.z[i])}">Score ${Math.round(G.T.z[i])}</span> · ${fmtDate(G.T.c[i][0])}` : fmtDate(G.T.c[i][0]) + ' · kein Score';
