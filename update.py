@@ -42,7 +42,7 @@ STAT_HORIZON = 10
 INDEX_COINS = 20
 CALIB_MAX_AGE_DAYS = 7
 CALIB_COINS = 40
-CALIB_VERSION = 13
+CALIB_VERSION = 14
 EXTEND_RANK = 60       # für Coins bis zu diesem Rang wird ältere Historie bei Bitfinex gesucht
 OUT_DIR = "site"
 
@@ -296,6 +296,12 @@ def load_coins():
 
 
 # ----------------------------------------------------------------- Kerzen
+def to_epoch(x):
+    """Datum → Unix-Sekunden, unabhängig von der internen Zeitauflösung (pandas 2: ns, pandas 3: us)."""
+    d = pd.to_datetime(x)
+    return ((d - pd.Timestamp("1970-01-01")) // pd.Timedelta(seconds=1)).astype("int64")
+
+
 def to_df(rows):
     rows = sorted({int(r[0]): r for r in rows}.values(), key=lambda r: int(r[0]))
     df = pd.DataFrame(rows, columns=["t", "o", "h", "l", "c", "v"])
@@ -443,7 +449,7 @@ def regroup(daily, how):
         start = key * 7 * 86400 + 4 * 86400
     else:
         key = dt.dt.year * 12 + dt.dt.month - 1
-        start = pd.to_datetime(pd.DataFrame({"year": key // 12, "month": key % 12 + 1, "day": 1})).astype("int64") // 10**9
+        start = to_epoch(pd.DataFrame({"year": key // 12, "month": key % 12 + 1, "day": 1}))
     g = daily.assign(k=np.asarray(key), s=np.asarray(start)).groupby("k", sort=True)
     return pd.DataFrame({"t": g["s"].first().astype("int64"), "o": g["o"].first(), "h": g["h"].max(), "l": g["l"].min(),
                          "c": g["c"].last(), "v": g["v"].sum(min_count=1)}).reset_index(drop=True)
@@ -535,7 +541,7 @@ def fred_daily(series_id):
     df.columns = ["date", "v"]
     df["v"] = pd.to_numeric(df["v"], errors="coerce")
     df = df.dropna()
-    idx = (pd.to_datetime(df["date"]).astype("int64") // 10**9).astype("int64").values
+    idx = to_epoch(df["date"]).values
     return pd.Series(df["v"].values, index=idx, dtype=float)
 
 
@@ -813,7 +819,7 @@ def macro_scores(m, btc_daily):
 HALVING_TS = [int(datetime.strptime(x, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()) for x in HALVINGS]
 
 
-def btc_long_scores(btc_daily):
+def btc_long_scores(btc_daily, mvrv=None):
     """Langfristige Bitcoin-Bewertungen (Gruppe „Zyklus“) – je Tag nur mit Daten bis zu diesem Tag."""
     out = {}
     if btc_daily is None or len(btc_daily) < 400:
@@ -841,6 +847,16 @@ def btc_long_scores(btc_daily):
     cs, fits = cycle_scores(t, c.values, [x for x in CYCLES if x[0] == "Zyklus 4 Jahre"])
     out.update(cs)
     out["_fits"] = fits
+    s200, s111, s350, s471 = (c.rolling(k, min_periods=k).mean() for k in (200, 111, 350, 471))
+    ovb = {"BTC 200-Wochen-Ø": (avail, {"200-Wochen-Ø": s1400.values}),
+           "BTC Mayer-Multiple": (avail, {"SMA 200 Tage": s200.values, "2,4 × SMA 200": (2.4 * s200).values,
+                                          "0,8 × SMA 200": (0.8 * s200).values}),
+           "BTC Pi-Cycle": (avail, {"SMA 111": s111.values, "2 × SMA 350": (2 * s350).values}),
+           "BTC Pi-Cycle-Boden": (avail, {"EMA 150": ema(c, 150).values, "0,745 × SMA 471": (0.745 * s471).values})}
+    if mvrv is not None and len(mvrv):
+        mv = mvrv.reindex(t).ffill(limit=5)
+        ovb["MVRV Z-Score"] = (avail, {"Realisierter Preis": (c.values / mv.values)})
+    out["_ov"] = ovb
     days = np.full(len(t), np.nan)
     for h in HALVING_TS:
         days = np.where(t >= h, (t - h) / 86400, days)
@@ -928,6 +944,12 @@ def coin_long_scores(daily):
         z = (y - a - b * x) / sd
     z[n < 365] = np.nan
     zs = pd.Series(z)
+    with np.errstate(invalid="ignore", over="ignore"):
+        mid = a + b * x
+        ok = n >= 365
+        ovl = {"Trend": np.where(ok, np.exp(mid), np.nan), "+1,5 σ": np.where(ok, np.exp(mid + 1.5 * sd), np.nan),
+               "−1,5 σ": np.where(ok, np.exp(mid - 1.5 * sd), np.nan)}
+    out.setdefault("_ov", {})["Log-Trendkanal"] = (avail, ovl)
     out["Log-Trendkanal"] = (avail, lin(zs, -1.5, 1.5).values, z,
                              lambda v: "unten im Kanal – günstig" if v < -1 else "oben im Kanal – teuer" if v > 1 else "Mitte",
                              lambda v: f"{v:+.1f} σ", z)
@@ -956,9 +978,9 @@ def support_resistance(h, l, c, atr, n=5, keep=12):
     Trendlinien durch die letzten zwei Tiefs bzw. Hochs. Nur Wendepunkte, die zum Zeitpunkt schon bestätigt waren.
     Ergebnis: Lage 0 (an der Unterstützung) … 1 (am Widerstand)."""
     N = len(c)
-    pos = np.full(N, np.nan)
+    pos, sup, res = np.full(N, np.nan), np.full(N, np.nan), np.full(N, np.nan)
     if N < 4 * n:
-        return pos
+        return pos, sup, res
     w = 2 * n + 1
     hs, ls = pd.Series(h), pd.Series(l)
     ph = (hs == hs.rolling(w, center=True).max()).values
@@ -984,10 +1006,14 @@ def support_resistance(h, l, c, atr, n=5, keep=12):
             lv.append(p2 + (p2 - p1) / (k2 - k1) * (i - k2))
         lv = np.array(lv)
         below, above = lv[lv <= c[i]], lv[lv > c[i]]
+        if len(below):
+            sup[i] = below.max()
+        if len(above):
+            res[i] = above.min()
         ds = (c[i] - below.max()) / atr[i] if len(below) else 6.0
         dr = (above.min() - c[i]) / atr[i] if len(above) else 6.0
         pos[i] = ds / max(ds + dr, 1e-9)
-    return pos
+    return pos, sup, res
 
 
 def group_means(subs, weights):
@@ -1320,7 +1346,7 @@ def components(df, macro, dom=None):
     rpos = (c - ll100) / (hh100 - ll100).replace(0, np.nan)
     hh300, ll300 = h.rolling(300, min_periods=120).max(), l.rolling(300, min_periods=120).min()
     rpos3 = (c - ll300) / (hh300 - ll300).replace(0, np.nan)
-    sr = support_resistance(h.values, l.values, c.values, atr.values)
+    sr, sr_sup, sr_res = support_resistance(h.values, l.values, c.values, atr.values)
     macd = ema(c, 12) - ema(c, 26)
     hist = macd - ema(macd, 9)
     hist_turn = (hist - hist.shift(2)) / (0.15 * atr)
@@ -1398,7 +1424,14 @@ def components(df, macro, dom=None):
                                 lambda x: "Käufer stärker als der Kurs (bullisch)" if x > 1 else
                                 "Käufer schwächer als der Kurs (bärisch)" if x < -1 else "im Gleichlauf")
     ct = close_times(df["t"].values)
-    for name, (avail, sc, raw, note, vf, disp) in macro.items():
+    # Linien in Kurs-Einheiten für den Kurs-Chart
+    s20 = sma(c, 20)
+    ov = {"Bollinger %B": {"Oberes Band": (s20 + 2 * bb_std).values, "Mitte (SMA 20)": s20.values, "Unteres Band": (s20 - 2 * bb_std).values},
+          "Unterstützung/Widerstand": {"Widerstand": sr_res, "Unterstützung": sr_sup},
+          "Abstand EMA 50": {"EMA 50": ema(c, 50).values}, "Abstand SMA 200": {"SMA 200": sma(c, 200).values}}
+    for name, (avail, lines) in (macro.get("_ov") or {}).items():
+        ov[name] = {k: align(ct, avail, v) for k, v in lines.items()}
+    for name, (avail, sc, raw, note, vf, disp) in [x for x in macro.items() if not x[0].startswith("_")]:
         ind[name] = (pd.Series(align(ct, avail, sc)), pd.Series(align(ct, avail, raw)), vf, note,
                      pd.Series(align(ct, avail, disp)))
     if dom is not None:
@@ -1410,7 +1443,7 @@ def components(df, macro, dom=None):
     subs = pd.DataFrame({name: np.asarray(v[0], dtype=float) for name, v in ind.items()})
     trend = ((c - ema(c, 20)) / atr).values        # über/unter dem 20er-EMA (für die Verkaufs-Bestätigung)
     return {"subs": subs, "ind": ind, "ct": ct, "t": df["t"].values, "c": df["c"].values,
-            "h": df["h"].values, "l": df["l"].values, "trend": trend}
+            "h": df["h"].values, "l": df["l"].values, "trend": trend, "ov": ov}
 
 
 # ----------------------------------------------------------------- Gesamtmarkt-Index
@@ -1589,8 +1622,9 @@ def run(coins_loader=load_coins, macro_loader=load_macro, html=None):
     # 2) Markt-Index, Dominanz, Markt-Indikatoren
     btc = next((f for m, s, f in loaded if m["sym"] == "BTC"), None)
     mscores = macro_scores(macro, btc.get("1d") if btc else None)
-    bl = btc_long_scores(btc.get("1d") if btc else None)
+    bl = btc_long_scores(btc.get("1d") if btc else None, macro["mvrv"][0] if "mvrv" in macro else None)
     btc_fits = bl.pop("_fits", [])
+    btc_ov = bl.pop("_ov", {})
     mscores.update(bl)
     top = loaded[:INDEX_COINS]
     idx_df, alt_df = {}, {}
@@ -1608,7 +1642,11 @@ def run(coins_loader=load_coins, macro_loader=load_macro, html=None):
         own = dict(mscores)
         cl = coin_long_scores(frames.get("1d"))
         coin_fits.append(btc_fits + cl.pop("_fits", []))
+        ovd = cl.pop("_ov", {})
+        if meta["sym"] == "BTC":
+            ovd.update(btc_ov)
         own.update(cl)
+        own["_ov"] = ovd
         for tf, df in frames.items():
             if len(df) < SCORE_MIN:
                 continue
@@ -1769,8 +1807,16 @@ def run(coins_loader=load_coins, macro_loader=load_macro, html=None):
                         for key, arr in (("hb", pm[2]), ("mb", pm[3])):
                             if arr is not None:
                                 xx[key + sx] = [r3(x) for x in arr]
+                # Linien für den Kurs-Chart (nur Linien mit Werten)
+                ovo = {}
+                for oname, lines in (C.get("ov") or {}).items():
+                    ll = {k: [None if not np.isfinite(x) else float(f"{x:.6g}") for x in np.asarray(v, dtype=float)]
+                          for k, v in lines.items() if np.isfinite(np.asarray(v, dtype=float)).any()}
+                    if ll:
+                        ovo[oname] = ll
+                extra["ovn"] = sorted(ovo)
                 with open(os.path.join(OUT_DIR, "data", "ind", f"{safe_name(meta['sym'])}_{tf}.json"), "w") as f:
-                    json.dump({"t0": int(df["t"].iloc[0]), "v": pane, "s": psub, "x": xx}, f, separators=(",", ":"))
+                    json.dump({"t0": int(df["t"].iloc[0]), "v": pane, "s": psub, "x": xx, "ov": ovo}, f, separators=(",", ":"))
                 extra["ind"] = 1
             ct = close_times(df["t"].values)
             overall = {mode: overall_at(ct, mode, scores[mode]) for mode in MODES}
@@ -2061,6 +2107,26 @@ li.row.sel{outline:2px solid var(--acc)}
 #all .gh span.lnk,#all .gh span.gs{float:none}
 #all .gh{position:sticky;left:0;text-align:left}
 #all{min-width:560px}
+.ldot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:1px;background:#475569}
+.ldot.lv{background:#22d3ee}.ldot.lz{background:#94a3b8}.ldot.lh{background:#fb923c}
+b.lv{color:#22d3ee}b.lz{color:#94a3b8}b.lh{color:#fb923c}
+.leg{font-size:12px;display:flex;gap:4px 10px;flex-wrap:wrap;align-items:center}
+.sw{position:relative;display:inline-block;width:30px;height:17px;vertical-align:middle}
+.sw input{opacity:0;width:0;height:0;position:absolute}
+.sw span{position:absolute;inset:0;background:#334155;border-radius:9px;transition:.15s}
+.sw span:before{content:"";position:absolute;width:13px;height:13px;left:2px;top:2px;background:#cbd5e1;border-radius:50%;transition:.15s}
+.sw input:checked+span{background:var(--acc)}
+.sw input:checked+span:before{transform:translateX(13px);background:#fff}
+#all td.cb{width:34px;padding-right:2px;text-align:center}
+.ovt{display:block;font-size:9.5px;color:var(--mut);margin-top:1px}
+#all .ih th{white-space:nowrap}
+.srcline{font-size:11.5px;color:var(--mut);margin:2px 0 6px}
+.srcline a,.fsrc a{color:var(--acc)}
+.fsrc{font-size:12.5px}
+.psrc{color:var(--mut);font-weight:400;font-size:10.5px}
+.ovleg{left:6px;top:4px;display:flex;flex-wrap:wrap;gap:2px 8px;font-size:10.5px;max-width:80%;pointer-events:none}
+.tft{width:100%;border-collapse:collapse;font-size:13px}.tft td,.tft th{padding:6px 4px;border-top:1px solid var(--line)}
+.tft .v{text-align:right}.tft .mut,.mut{color:var(--mut)}.tft .gsum td{background:var(--card2)}
 </style>
 </head>
 <body>
@@ -2076,7 +2142,6 @@ li.row.sel{outline:2px solid var(--acc)}
     <button class="chip" data-o="lo">Score tief → hoch</button>
     <button class="chip" id="favTop">★ Favoriten oben</button>
   </div>
-  <div class="chips" id="ltf"><span class="lbl">Score:</span></div>
   <div class="chips" id="chips">
     <button class="chip on" data-f="all">Alle</button>
     <button class="chip b" data-f="buy">Kaufzone ≥80</button>
@@ -2111,12 +2176,14 @@ li.row.sel{outline:2px solid var(--acc)}
       <button class="chip sm" id="tgCyc" style="--c:#eab308">₿-Zyklus <span style="color:#eab308">▲</span><span style="color:#22d3ee">▼</span></button>
       <div class="seg cseg"><button data-c="USD">$</button><button data-c="EUR">€</button></div>
       <span id="mas"></span>
-      <span class="lbl" style="margin-left:4px">Score:</span><div class="seg" id="zseg"><button data-z="tf">Zeitrahmen</button><button data-z="g">Gesamt</button></div>
     </div>
     <div class="mres" id="mres"></div>
+    <div class="srcline" id="srcline"></div>
     <div class="cwrap" id="cwrap"></div>
-    <div class="msg" id="noz" style="display:none">Für diesen Zeitrahmen gibt es zu wenige Kerzen für einen eigenen Score – schalte auf „Gesamt“.</div>
+    <div class="msg" id="noz" style="display:none">Für diesen Zeitrahmen gibt es zu wenige Kerzen für einen Score.</div>
   </div>
+  <div class="sec" id="tfsbox"><details data-k="tfs"><summary>Scores je Zeitrahmen</summary><div id="tfs"></div>
+    <p class="note">Das Score-Fenster zeigt immer den Gesamt-Score des gewählten Modus. Jeder Zeitrahmen hat zusätzlich einen eigenen Score – mit dem Schalter legst du seine Kurve ins Score-Fenster.</p></details></div>
   <div class="sec" id="ibox" style="display:none"><div id="ibody"></div></div>
   <div class="sec" id="trbox"><details data-k="tr" open><summary>Signale &amp; Tranchen</summary>
     <div class="trg">
@@ -2186,7 +2253,7 @@ const TFL = Object.fromEntries(D.tfs);
 const SEC = {'1h':3600,'4h':14400,'1d':86400,'5d':432000,'1w':604800,'2w':1209600,'1M':2629800,'6M':15778800,'1y':31557600};
 const $ = id => document.getElementById(id);
 const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
-let filter = 'all', query = '', ltf = store('ltf2') || 'g', ctf = store('ctf') || '4h', sortBy = store('sort') || 'mc';
+let filter = 'all', query = '', ltf = 'g', ctf = store('ctf') || '4h', sortBy = store('sort') || 'mc';
 let mode = store('mode') === 'long' ? 'long' : 'short';
 let ccy = store('ccy') === 'EUR' ? 'EUR' : 'USD';
 const TRDEF = {bN: 1, bStart: 80, bStep: 5, bRe: 50, bSize: 100, bMode: 'pct',
@@ -2297,11 +2364,11 @@ function setMode(m){
 document.querySelectorAll('.mseg').forEach(s => s.addEventListener('click', e => { const b = e.target.closest('button'); if (b) setMode(b.dataset.m); }));
 
 // ---------------- Liste
-$('ltf').insertAdjacentHTML('beforeend', `<button class="chip" data-t="g">Gesamt</button>` + D.ltfs.map(t => `<button class="chip" data-t="${t}">${TFL[t]}</button>`).join(''));
+// Durchgehende Nummerierung (Stablecoins und verpackte Coins sind herausgefiltert, daher ohne Lücken)
+D.coins.slice().sort((a, b) => a.r - b.r).forEach((c, i) => { c.r0 = c.r; c.r = i + 1; });
 const TFN = t => t === 'g' ? 'Gesamt' : TFL[t];
-function setLtf(t){ ltf = t; store('ltf2', t); document.querySelectorAll('#ltf .chip').forEach(b => b.classList.toggle('on', b.dataset.t === t)); render(); }
+function setLtf(){ ltf = 'g'; render(); }
 function setSort(o){ sortBy = o; store('sort', o); document.querySelectorAll('#sort .chip').forEach(b => b.classList.toggle('on', b.dataset.o === o)); render(); }
-$('ltf').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) setLtf(b.dataset.t); });
 $('sort').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b && b.dataset.o) setSort(b.dataset.o); });
 const scoreOf = c => ltf === 'g' ? (mode === 'long' ? c.gl : c.g) : (mode === 'long' ? c.scl : c.sc)[ltf];
 function match(c){
@@ -2533,7 +2600,7 @@ $('sheetok').addEventListener('click', closeSheet);
 $('sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
 
 // ---------------- Optionen: Linien, Schwelle, Score-Art
-const zArr = T => zsel === 'g' && !T._z0 ? (T['zg' + sfx()] || T['z' + sfx()]) : (T['z' + sfx()] || null);
+const zArr = T => !T._z0 ? (T['zg' + sfx()] || T['z' + sfx()]) : (T['z' + sfx()] || null);
 $('mas').innerHTML = MA.map(([k, l, c]) => `<button class="chip sm ma" data-k="${k}"><i style="background:${c}"></i>${l}</button>`).join('');
 $('mas').addEventListener('click', e => { const b = e.target.closest('.ma'); if (!b) return; const k = b.dataset.k;
   mas = mas.includes(k) ? mas.filter(x => x !== k) : mas.concat(k); store('mas', JSON.stringify(mas)); syncOpts(); if (cur && cur.data) show(true); });
@@ -2550,12 +2617,33 @@ function syncOpts(){
   document.querySelectorAll('#mas .ma').forEach(b => b.classList.toggle('on', mas.includes(b.dataset.k)));
   $('tgPiv').classList.toggle('on', showPiv); $('tgCyc').classList.toggle('on', showCyc); $('tgSim').classList.toggle('on', simOn);
   $('thrw').style.opacity = showPiv ? 1 : .35; $('thr').value = thrGet(); $('thrv').textContent = thrGet() + ' %';
-  document.querySelectorAll('#zseg button').forEach(b => b.classList.toggle('on', b.dataset.z === zsel));
 }
 $('tgPiv').addEventListener('click', () => { showPiv = !showPiv; store('piv', showPiv ? '1' : '0'); syncOpts(); redraw(); });
 $('tgCyc').addEventListener('click', () => { showCyc = !showCyc; store('cyc', showCyc ? '1' : '0'); syncOpts(); redraw(); });
 $('thr').addEventListener('input', () => { store('thr_' + mode, $('thr').value); $('thrv').textContent = $('thr').value + ' %'; if (G) { G.zz = null; redraw(); } });
-$('zseg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; zsel = b.dataset.z; store('zsel', zsel); show(true); });
+// Scores je Zeitrahmen: Übersicht + Schalter, um einzelne Kurven zusätzlich ins Score-Fenster zu legen
+let tfc = new Set(); try { tfc = new Set(JSON.parse(store('tfc') || '[]') || []); } catch (e) {}
+const TF_COL = ['#38bdf8', '#f472b6', '#facc15', '#4ade80', '#fb923c', '#c084fc', '#2dd4bf', '#f87171', '#a3e635'];
+const lastV = a => { if (!a) return null; for (let i = a.length - 1; i >= 0; i--) if (a[i] != null) return a[i]; return null; };
+function tfsTable(){
+  if (!cur || !cur.data) return;
+  const rows = D.tfs.map(([t, l], q) => { const T = cur.data.tf[t]; if (!T || !T.c) return '';
+    const k = lastV(T._z0 ? T._z0.z : T.z), lv = lastV(T._z0 ? T._z0.zl : T.zl), has = !!(T['z' + sfx()]);
+    const cell = v => v == null ? '<td class="v mut">–</td>' : `<td class="v"><b style="color:${color(v)}">${Math.round(v)}</b></td>`;
+    return `<tr><td><i class="ldot" style="background:${TF_COL[q % 9]}"></i>${l}${t === ctf ? ' <small class="mut">(angezeigt)</small>' : ''}</td>${cell(k)}${cell(lv)}
+      <td class="v">${has ? `<label class="sw"><input type="checkbox" class="tfsw" data-t="${t}" ${tfc.has(t) ? 'checked' : ''}><span></span></label>` : ''}</td></tr>`; }).join('');
+  const G1 = lastV(cur.data.tf[ctf] && cur.data.tf[ctf].zg), G2 = lastV(cur.data.tf[ctf] && cur.data.tf[ctf].zgl);
+  $('tfs').innerHTML = `<table class="tft"><tr class="ih"><th>Zeitrahmen</th><th class="v">Kurzfr.</th><th class="v">Langfr.</th><th class="v">Kurve</th></tr>
+    <tr class="gsum"><td><b>Gesamt</b></td><td class="v"><b style="color:${color(G1)}">${G1 == null ? '–' : Math.round(G1)}</b></td><td class="v"><b style="color:${color(G2)}">${G2 == null ? '–' : Math.round(G2)}</b></td><td class="v mut">immer</td></tr>${rows}</table>`;
+}
+$('tfs').addEventListener('change', e => { const b = e.target.closest('.tfsw'); if (!b) return;
+  b.checked ? tfc.add(b.dataset.t) : tfc.delete(b.dataset.t); store('tfc', JSON.stringify([...tfc])); show(true); });
+// Score eines anderen Zeitrahmens auf die Kerzen des angezeigten Zeitrahmens legen (Wert der letzten abgeschlossenen Kerze)
+function tfCurve(t2, T){
+  const T2 = cur.data.tf[t2], z = T2 && T2['z' + sfx()]; if (!z) return null;
+  const c2 = T2.c, s2 = SEC[t2], s1 = SEC[ctf]; let j = -1;
+  return T.c.map(k => { const tEnd = k[0] + s1; while (j + 1 < c2.length && c2[j + 1][0] + s2 <= tEnd) j++; return j >= 0 ? z[j] : null; });
+}
 // Signale: Kauf-Tranche k beim ersten Eintritt über ihre Schwelle je Runde, Verkauf-Tranche k beim ersten Eintritt
 // unter ihre Schwelle. Eine neue Runde beginnt, wenn der Score wieder die Mitte (50) erreicht.
 function signalsJS(z, from){
@@ -2873,13 +2961,16 @@ function openFocus(kind, name){
   focus = {kind, name}; M = null; $('detail').scrollTop = 0; $('dmain').scrollTop = 0; show(true);
 }
 $('all').addEventListener('click', e => {
+  if (e.target.classList.contains('vis')) { setVis(e.target.dataset.n, e.target.checked); return; }
+  if (e.target.closest('label.sw')) return;
   if (e.target.classList.contains('exc')) { const k = e.target.dataset.n; if (e.target.checked) excl.delete(k); else excl.add(k);
     saveExcl(); show(true); return; }
   if (e.target.closest('td.cb')) return;
   const r = e.target.closest('tr.irow'), g = e.target.closest('tr.grow');
   if (r) openFocus('ind', r.dataset.n); else if (g) openFocus('grp', g.dataset.g);
 });
-$('ibody').addEventListener('click', e => { const a = e.target.closest('[data-n]'); if (a) openFocus('ind', a.dataset.n); });
+$('ibody').addEventListener('click', e => { if (e.target.closest('a, label')) return; const a = e.target.closest('tr[data-n]'); if (a) openFocus('ind', a.dataset.n); });
+$('ibody').addEventListener('change', e => { if (e.target.classList.contains('vis')) setVis(e.target.dataset.n, e.target.checked); });
 function renderFocus(T){
   const b = T.b || [], ws = weightShares(b), K = T['k' + sfx()] || {};
   const sec = (t, x) => x ? `<h5>${t}</h5><p>${x}</p>` : '';
@@ -2892,6 +2983,10 @@ function renderFocus(T){
         <div class="cat">Teil-Score<b style="color:${color(x && x[2])}">${x ? x[2] : '–'}</b>${x ? label(x[2]) : ''}</div>
         <div class="cat">Anteil am Score<b>${x ? (ws[x[0]] || 0).toFixed(1).replace('.', ',') + ' %' : '–'}</b>${TFL[ctf]} · ${esc(D.modes[mode].label)}</div>
       </div>
+      <p class="fsrc"><i class="ldot ${leadCls(focus.name)}"></i>${leadTxt(focus.name).replace('<br>', ' ')} ·
+        Quelle: ${esc(srcOf(focus.name))} · <a href="${linkOf(focus.name)}" target="_blank" rel="noopener">Original-Chart ↗</a></p>
+      <label class="chk"><input type="checkbox" class="vis" data-n="${esc(focus.name)}" ${isOv(focus.name) && ovs.has(focus.name) ? 'checked' : ''} ${isOv(focus.name) ? '' : 'disabled'}>
+        ${isOv(focus.name) ? 'Linien zusätzlich im Kurs-Chart zeigen' : 'wird als Fenster unter dem Kurs-Chart gezeigt'}</label>
       ${sec('Was misst er?', d[0])}${sec('Wie liest man ihn?', d[1])}${sec('So fließt er in den Score ein', d[2])}
       <p class="note">Im Chart: lila Linie = der Indikator selbst, Hintergrund = sein Teil-Score (grün ab ${buyLv()[0]}, rot unter ${sellLv()[0]} – wie die erste Kauf- und Verkaufsstufe).
       Die gestrichelten Linien markieren die echten Hochs und Tiefs – so siehst du, ob er dort ausgeschlagen hat.</p>`;
@@ -3002,9 +3097,52 @@ function recompute(T, ind){
   });
   T._z0 = z0;
 }
+// ---------------- Indikatoren im Chart: Linien in Kurs-Einheiten direkt im Kurs-Chart, alle anderen als Fenster
+let ovs = new Set(); try { ovs = new Set(JSON.parse(store('ovs') || '[]') || []); } catch (e) {}
+const isOv = k => { const T = cur && cur.data && cur.data.tf[ctf]; return !!(T && T.ovn && T.ovn.includes(k)); };
+const isVis = k => isOv(k) ? ovs.has(k) : panes.includes(k);
+const ovActive = T => !!(T && T.ovn && T.ovn.some(k => ovs.has(k)));
+function setVis(k, on){
+  if (isOv(k)) { on ? ovs.add(k) : ovs.delete(k); store('ovs', JSON.stringify([...ovs])); }
+  else { panes = panes.filter(x => x !== k); if (on) panes.push(k); store('panes', JSON.stringify(panes)); }
+  show(true);
+}
+const OV_COL = ['#e2e8f0', '#38bdf8', '#f472b6', '#facc15', '#4ade80', '#fb923c', '#c084fc', '#2dd4bf'];
+function drawOverlays(chart, T, ind, prec){
+  if (!ind || !ind.ov || !T.ovn) return '';
+  const pre = T.pre || 0; let q = 0, leg = [];
+  T.ovn.filter(k => ovs.has(k) && ind.ov[k]).forEach(k => {
+    Object.entries(ind.ov[k]).forEach(([lab, arr]) => { const col = OV_COL[q++ % OV_COL.length];
+      const ls = chart.addLineSeries({color: col, lineWidth: 1.5, lineStyle: /Band|σ|×/.test(lab) ? 2 : 0, priceLineVisible: false,
+        lastValueVisible: false, crosshairMarkerVisible: false, priceFormat: {type: 'price', precision: prec, minMove: Math.pow(10, -prec)}});
+      ls.setData(T.c.map((c, j) => { const v = arr[j - pre]; return v == null || j - pre < 0 ? {time: c[0]} : {time: c[0], value: toC(v, c[0])}; }));
+      leg.push(`<span style="color:${col}">━ ${esc(lab)}</span>`); });
+  });
+  return leg.join(' ');
+}
+function srcLine(T){
+  const src = cur.data.src || cur.meta.src || '';
+  $('srcline').innerHTML = `Kurs: ${esc(src)}${/Bitstamp|Blockchain|Bitfinex/.test(src) && ['1h', '4h'].includes(ctf) ? ' (ältere Daten nur ab Tageskerzen)' : ''} · <a href="${tvUrl()}" target="_blank" rel="noopener">Original-Chart ↗</a>`;
+}
+const tvUrl = sym => { sym = sym || cur.meta.s; const src = String(cur && cur.data ? cur.data.src : '').split(' ')[0].toUpperCase();
+  const ex = sym === 'BTC' ? 'BITSTAMP:BTCUSD' : (['BINANCE', 'OKX', 'KUCOIN'].includes(src) ? src : 'BINANCE') + ':' + sym + 'USDT';
+  return 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(ex); };
+const LINKS = {
+  'Fear & Greed': 'https://alternative.me/crypto/fear-and-greed-index/',
+  'Dollar-Index (DXY)': 'https://finance.yahoo.com/quote/DX-Y.NYB/',
+  'Bitcoin/Gold': 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent('BITSTAMP:BTCUSD/TVC:GOLD'),
+  'US-Geldmenge M2': 'https://fred.stlouisfed.org/series/M2SL', 'Fed-Bilanz': 'https://fred.stlouisfed.org/series/WALCL',
+  'US-Zinsen 10J': 'https://fred.stlouisfed.org/series/DGS10', 'Stablecoin-Menge': 'https://defillama.com/stablecoins',
+  'Hash Ribbons': 'https://www.blockchain.com/explorer/charts/hash-rate', 'Puell-Multiple': 'https://www.blockchain.com/explorer/charts/miners-revenue',
+  'MVRV Z-Score': 'https://coinmetrics.io/community-network-data/', 'SOPR': 'https://coinmetrics.io/community-network-data/',
+  'Börsen-Nettozufluss': 'https://coinmetrics.io/community-network-data/', 'Funding-Rate': 'https://www.coinglass.com/FundingRate',
+  'BTC-Dominanz': 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent('CRYPTOCAP:BTC.D'),
+  'Halving-Phase': 'https://www.blockchain.com/explorer/charts/market-price',
+};
+const linkOf = k => LINKS[k] || (k.startsWith('BTC ') || k === 'Zyklus 4 Jahre' ? tvUrl('BTC') : tvUrl());
 const activePanes = () => focus ? [focus.kind === 'ind' ? focus.name : 'Score-Teil ' + focus.name] : panes;
 async function loadInd(T){
-  if ((!activePanes().length && !excl.size) || !T.ind) return null;
+  if ((!activePanes().length && !excl.size && !ovActive(T)) || !T.ind) return null;
   const key = cur.meta.f + '_' + ctf;
   if (!indCache[key]) {
     try { const r = await fetch('data/ind/' + key + '.json?v=' + encodeURIComponent(D.updated)); indCache[key] = r.ok ? await r.json() : {v: {}}; }
@@ -3028,7 +3166,8 @@ async function show(keep){
   $('dsc').innerHTML = `<small style="display:block;font-size:9px;font-weight:600;opacity:.8">Gesamt</small>${s == null ? '–' : Math.round(s)}`;
   $('dsc').style.color = col; $('dsc').style.background = col + '22';
   ['fbox', 'allbox', 'statbox'].forEach(id => $(id).style.display = ownZ && T.b && !focus ? '' : 'none');
-  ['trbox', 'simbox', 'expbox', 'dnote'].forEach(id => $(id).style.display = focus ? 'none' : '');
+  ['trbox', 'simbox', 'expbox', 'dnote', 'tfsbox'].forEach(id => $(id).style.display = focus ? 'none' : '');
+  tfsTable(); srcLine(T);
   $('ibox').style.display = focus ? '' : 'none';
   if (focus) renderFocus(T);
   $('noz').style.display = hasZ ? 'none' : '';
@@ -3072,9 +3211,11 @@ function weightShares(list){
 let isort = store('isort') || 'group';
 $('exbar').addEventListener('change', e => { if (e.target.id === 'exAll' && e.target.checked) { excl.clear(); saveExcl(); show(true); } else if (e.target.id === 'exAll') e.target.checked = true; });
 const fmtDays = d => d >= 60 ? Math.round(d / 30) + ' Mon.' : d >= 14 ? Math.round(d / 7) + ' Wo.' : d + ' T';
+const leadCls = k => { const d = D.lead && D.lead[k]; return d == null ? '' : d > 0 ? 'lv' : d < 0 ? 'lh' : 'lz'; };
 function leadTxt(k){ const d = D.lead && D.lead[k];
   if (d == null) return '<span class="mut">–</span>';
-  return d > 0 ? `<b class="up">voraus</b><br>~${fmtDays(d)}` : d < 0 ? `<b class="dn">hinterher</b><br>~${fmtDays(-d)}` : '<b>zeitgleich</b>'; }
+  return d > 0 ? `<b class="lv">läuft voraus</b><br>~${fmtDays(d)}` : d < 0 ? `<b class="lh">läuft hinterher</b><br>~${fmtDays(-d)}` : '<b class="lz">zeitgleich</b>'; }
+const LEG = '<span class="leg"><i class="ldot lv"></i>läuft voraus <i class="ldot lz"></i>zeitgleich <i class="ldot lh"></i>läuft hinterher</span>';
 function srcOf(k){ const s = D.srcs && D.srcs[k]; if (s) return s;
   const src = cur && cur.data ? String(cur.data.src || cur.meta.src).split(' ')[0] : 'Börse';
   return k.startsWith('Zyklus') || k === 'Abstand zum Allzeithoch' || k === 'Log-Trendkanal' || k === 'Wochen-RSI' ? `Tageskurs (${src})` : `Kurs & Volumen (${src})`; }
@@ -3085,21 +3226,22 @@ function indTable(T){
   const G4 = ['Lage', 'Markt', 'Wende', 'Zyklus'], K = T['k' + sfx()] || {};
   const ws = weightShares(T.b), cnt = g => T.b.filter(x => x[1] === g).length;
   $('allsum').textContent = `Alle Indikatoren (${T.b.length})`;
-  const head = `<tr class="ih"><th></th><th>Indikator</th><th class="v">Score</th><th class="v">Gewicht</th><th class="v">Vorlauf</th><th class="v">Wert</th><th>Quelle</th></tr>`;
+  const head = `<tr class="ih"><th title="zählt im Score">Aktiv</th><th title="im Chart anzeigen">Chart</th><th>Indikator</th><th class="v">Score</th><th class="v">Gewicht</th><th class="v">Vorlauf</th><th class="v">Wert</th><th>Quelle</th></tr>`;
   const row = x => { const off = excl.has(x[0]);
     return `<tr class="irow${off ? ' off' : ''}" data-n="${esc(x[0])}"><td class="cb"><input type="checkbox" class="exc" data-n="${esc(x[0])}" ${off ? '' : 'checked'}></td>
-     <td><span class="lnk">${esc(x[0])} ›</span>${isort !== 'group' ? ` <small class="gtag">${GNAMES[x[1]]}</small>` : ''}<br><span style="color:var(--mut);font-size:11px">${esc(x[4])}</span></td>
+     <td class="cb"><label class="sw" title="${isOv(x[0]) ? 'im Kurs-Chart' : 'als Fenster unter dem Chart'}"><input type="checkbox" class="vis" data-n="${esc(x[0])}" ${isVis(x[0]) ? 'checked' : ''}><span></span></label>${isOv(x[0]) ? '<small class="ovt">Kurs</small>' : ''}</td>
+     <td><i class="ldot ${leadCls(x[0])}"></i><span class="lnk">${esc(x[0])} ›</span>${isort !== 'group' ? ` <small class="gtag">${GNAMES[x[1]]}</small>` : ''}<br><span style="color:var(--mut);font-size:11px">${esc(x[4])}</span></td>
      <td class="v"><span class="mini"><i style="width:${x[2]}%;background:${color(x[2])}"></i></span> <b style="color:${color(x[2])}">${x[2]}</b></td>
      <td class="v">${off ? 'aus' : (ws[x[0]] || 0).toFixed(1).replace('.', ',') + ' %'}</td>
      <td class="v ld">${leadTxt(x[0])}</td><td class="v">${esc(x[3])}</td><td class="srcc">${esc(srcOf(x[0]))}</td></tr>`; };
   let html = head;
-  if (isort === 'group') html += G4.filter(cnt).map(g => `<tr class="grow" data-g="${g}"><td colspan="7" class="gh"><span class="lnk">${GNAMES[g]} (${cnt(g)}) ›</span>
+  if (isort === 'group') html += G4.filter(cnt).map(g => `<tr class="grow" data-g="${g}"><td colspan="8" class="gh"><span class="lnk">${GNAMES[g]} (${cnt(g)}) ›</span>
       <span class="gs">&nbsp; ${(T.b.filter(x => x[1] === g).reduce((a, x) => a + (ws[x[0]] || 0), 0)).toFixed(0)} % · Score <b style="color:${color(K[g])}">${K[g] ?? '–'}</b></span></td></tr>` + T.b.filter(x => x[1] === g).map(row).join('')).join('');
   else html += [...T.b].sort((a, b) => isort === 'weight' ? (ws[b[0]] || 0) - (ws[a[0]] || 0)
     : isort === 'lead' ? (D.lead[b[0]] ?? 0) - (D.lead[a[0]] ?? 0) : b[2] - a[2]).map(row).join('');
   $('all').innerHTML = html;
-  $('exbar').innerHTML = `<label class="chk"><input type="checkbox" id="exAll" ${excl.size ? '' : 'checked'}> Alle Indikatoren einschalten</label>
-    <span class="mut">${excl.size ? `${excl.size} abgewählt – Score-Kurve, Signale und Simulation dieses Coins werden im Browser neu berechnet (Zeitrahmen-Score; Liste und Gesamt-Score bleiben unverändert).` : 'Häkchen entfernen, um einen Indikator aus dem Score zu nehmen.'}</span>`;
+  $('exbar').innerHTML = LEG + `<span class="mut" style="flex-basis:100%">Häkchen „Aktiv“ = zählt im Score · Schalter „Chart“ = im Chart zeigen (mit „Kurs“ markierte direkt im Kurs-Chart, alle anderen als Fenster darunter)</span><label class="chk"><input type="checkbox" id="exAll" ${excl.size ? '' : 'checked'}> Alle Indikatoren einschalten</label>
+    <span class="mut">${excl.size ? `${excl.size} abgewählt – Score-Kurve, Signale und Simulation dieses Coins werden im Browser neu berechnet (Zeitrahmen-Score; Liste und Gesamt-Score bleiben unverändert).` : ''}</span>`;
   $('allnote').textContent = 'Gewicht = ungefährer Anteil am Score: Lage und Markt bilden die Richtung (zusammen etwa 70 %), die Wende den Zeitpunkt (etwa 20 %), die Langfrist-Gruppe die Stärke des Ausschlags (etwa 10 %); innerhalb jeder Gruppe nach den kalibrierten Gewichten verteilt. Score: 100 = spricht für Kaufen, 0 = für Verkaufen. Tippe auf eine Zeile für Chart und Erklärung.';
 }
 
@@ -3214,11 +3356,17 @@ function draw(T, ind){
         const ls = chart.addLineSeries({color: col, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false,
           crosshairMarkerVisible: false, priceFormat: {type: 'price', precision: prec, minMove: Math.pow(10, -prec)}});
         ls.setData(T.c.map((c, j) => v[j] == null ? {time: c[0]} : {time: c[0], value: v[j]})); });
+      const leg = drawOverlays(chart, T, ind, prec);
+      if (leg) $('ch' + i).parentElement.insertAdjacentHTML('beforeend', `<div class="plab ovleg">${leg}</div>`);
     } else if (p.kind === 'score') {
       vals = Z;
       series = triScore(chart, T.c.map((k, j) => Z[j] == null ? {time: k[0]} : {time: k[0], value: Z[j]}).concat(fut), {w: 2, a: 0.32, last: true});
       buyLv().forEach((lv, q) => series.createPriceLine({price: lv, color: '#22c55e', lineWidth: 1, lineStyle: 2, axisLabelVisible: q === 0, title: q === 0 ? 'Kauf' : ''}));
       sellLv().forEach((lv, q) => series.createPriceLine({price: lv, color: '#ef4444', lineWidth: 1, lineStyle: 2, axisLabelVisible: q === 0, title: q === 0 ? 'Verk.' : ''}));
+      D.tfs.forEach(([t2, l2], q) => { if (!tfc.has(t2)) return; const v = tfCurve(t2, T); if (!v) return;
+        const ls = chart.addLineSeries({color: TF_COL[q % 9], lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true, title: l2,
+          crosshairMarkerVisible: false, autoscaleInfoProvider: () => ({priceRange: {minValue: 0, maxValue: 100}})});
+        ls.setData(T.c.map((k, j) => v[j] == null ? {time: k[0]} : {time: k[0], value: v[j]})); });
     } else {
       const isCyc = p.name === 'Zyklen', src = isCyc ? [] : ind.v[p.name];
       vals = T.c.map((k, j) => { const q = j - pre; return q >= 0 && q < src.length ? src[q] : null; });
@@ -3268,7 +3416,7 @@ function labels(i){
   G.charts.forEach(c => { if (c.kind === 'price') return; const el = $('plab' + c.i); if (!el) return;
     const v = c.vals ? c.vals[Math.max(0, Math.min(G.n - 1, i))] : null;
     const sv = c.svals ? c.svals[Math.max(0, Math.min(G.n - 1, i))] : null;
-    el.innerHTML = (c.kind === 'score' ? `${G.T._z0 ? 'Score ' + TFL[ctf] + ' · eigene Auswahl (' + excl.size + ' aus)' : zsel === 'g' ? 'Gesamt-Score' : 'Score ' + TFL[ctf]} · ${esc(D.modes[mode].label)}` : esc(c.name)) + ` <b>${c.kind === 'score' ? (v == null ? '–' : Math.round(v)) : num(v)}</b>`
+    el.innerHTML = (c.kind === 'score' ? `${G.T._z0 ? 'Score ' + TFL[ctf] + ' · eigene Auswahl (' + excl.size + ' aus)' : 'Gesamt-Score'} · ${esc(D.modes[mode].label)}` : esc(c.name) + ` <span class="psrc">· ${esc(srcOf(c.name))}</span>`) + ` <b>${c.kind === 'score' ? (v == null ? '–' : Math.round(v)) : num(v)}</b>`
       + (c.svals ? ` · Score <b style="color:${color(sv)}">${sv == null ? '–' : sv}</b>` : ''); });
 }
 
@@ -3469,7 +3617,7 @@ let rsT = null;
 window.addEventListener('resize', () => { clearTimeout(rsT); rsT = setTimeout(() => { if (cur && cur.data) { header(); show(true); } }, 200); });
 
 document.querySelectorAll('.mseg button').forEach(b => b.classList.toggle('on', b.dataset.m === mode));
-setLtf(ltf === 'g' || D.ltfs.includes(ltf) ? ltf : 'g');
+setLtf();
 explain();
 const h0 = parseHash();
 if (h0.sym) openCoin(h0.sym, h0.kind ? {kind: h0.kind, name: h0.name} : null); else if (desktop() && D.coins.length) openCoin(D.coins[0].s);
