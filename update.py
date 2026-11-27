@@ -42,7 +42,7 @@ STAT_HORIZON = 10
 INDEX_COINS = 20
 CALIB_MAX_AGE_DAYS = 7
 CALIB_COINS = 40
-CALIB_VERSION = 9
+CALIB_VERSION = 12
 EXTEND_RANK = 60       # für Coins bis zu diesem Rang wird ältere Historie bei Bitfinex gesucht
 OUT_DIR = "site"
 
@@ -62,13 +62,15 @@ OVERALL = {"short": {"1h": 0.25, "4h": 0.40, "1d": 0.35},
 HALVINGS = ["2012-11-28", "2016-07-09", "2020-05-11", "2024-04-20", "2028-04-15"]
 
 GROUP_OF = {
-    "RSI (14)": "Lage", "Stochastic RSI": "Lage", "Williams %R": "Lage", "CCI (20)": "Lage", "MFI (14)": "Lage",
+    "RSI (14)": "Lage", 
     "Bollinger %B": "Lage", "Abstand EMA 50": "Lage", "Abstand SMA 200": "Lage",
     "Lage in 100-Kerzen-Spanne": "Lage", "Lage in 300-Kerzen-Spanne": "Lage",
     "MACD dreht": "Wende", "RSI-Divergenz": "Wende", "Stoch-RSI Kreuzung": "Wende", "RSI-Schwung (3)": "Wende",
     "Erholung vom Tief": "Wende", "Volumen-Klimax": "Wende", "Kerzen-Docht": "Wende", "Zyklen": "Wende",
     "Fear & Greed": "Markt", "Dollar-Index (DXY)": "Markt", "Bitcoin/Gold": "Markt", "BTC-Dominanz": "Markt",
-    "Kreuz naht": "Wende",
+    "Kreuz naht": "Wende", "Funding-Rate": "Markt",
+    "Abstand zum Allzeithoch": "Zyklus", "Log-Trendkanal": "Zyklus", "US-Geldmenge M2": "Zyklus",
+    "Stablecoin-Menge": "Zyklus", "Hash Ribbons": "Zyklus", "MVRV": "Zyklus",
     "BTC 200-Wochen-Ø": "Zyklus", "BTC Mayer-Multiple": "Zyklus", "BTC Pi-Cycle": "Zyklus", "Halving-Phase": "Zyklus",
 }
 BASE_WEIGHTS = {"Lage in 100-Kerzen-Spanne": 2.5, "Lage in 300-Kerzen-Spanne": 0.5, "Abstand EMA 50": 1.5,
@@ -78,29 +80,25 @@ BASE_WEIGHTS = {"Lage in 100-Kerzen-Spanne": 2.5, "Lage in 300-Kerzen-Spanne": 0
                 "RSI-Divergenz": 1.0, "Volumen-Klimax": 0.5, "Kerzen-Docht": 0.5, "Zyklen": 1.5,
                 "Fear & Greed": 1.0, "Dollar-Index (DXY)": 1.0, "Bitcoin/Gold": 1.0, "BTC-Dominanz": 1.0,
                 "Kreuz naht": 1.0, "BTC 200-Wochen-Ø": 1.0, "BTC Mayer-Multiple": 1.0, "BTC Pi-Cycle": 1.0,
-                "Halving-Phase": 1.0}
+                "Halving-Phase": 1.0, "Funding-Rate": 1.0, "Abstand zum Allzeithoch": 1.0, "Log-Trendkanal": 1.0,
+                "US-Geldmenge M2": 1.0, "Stablecoin-Menge": 1.0, "Hash Ribbons": 1.0, "MVRV": 1.0}
 MODES = {
     "short": {"label": "Kurzfristig", "pivN": 10,
               "weights": BASE_WEIGHTS,
-              "default": {"wm": 0.35, "gb": 0.4, "kh": 0.5, "km": 0.5, "share": 0.02},
-              "grid": {"wm": [0.0, 0.35, 0.7], "gb": [0.2, 0.4, 0.6], "kh": [0.0, 0.5, 1.0],
-                       "km": [0.0, 0.5, 1.0], "share": [0.01, 0.02, 0.04]}},
+              "default": {"wm": 0.35, "gb": 0.4, "kh": 0.5, "km": 0.5, "share": 0.04, "a0": 0.6},
+              "grid": {"wm": [0.0, 0.5], "gb": [0.2, 0.4, 0.6], "kh": [0.0, 0.5, 1.0],
+                       "km": [0.0, 0.5], "share": [0.02, 0.04, 0.08], "a0": [0.45, 0.6, 0.75]}},
     "long": {"label": "Langfristig", "pivN": 30,
              "weights": dict(BASE_WEIGHTS, **{"Lage in 100-Kerzen-Spanne": 1.0, "Lage in 300-Kerzen-Spanne": 3.0,
-                                              "Abstand SMA 200": 3.0, "Abstand EMA 50": 1.0, "Stochastic RSI": 0.25,
-                                              "Williams %R": 0.25, "CCI (20)": 0.25, "RSI-Schwung (3)": 0.5,
+                                              "Abstand SMA 200": 3.0, "Abstand EMA 50": 1.0, "RSI-Schwung (3)": 0.5,
                                               "Kerzen-Docht": 0.25, "Volumen-Klimax": 0.25, "Zyklen": 2.0,
                                               "Fear & Greed": 1.5, "Bitcoin/Gold": 1.5}),
-             "default": {"wm": 0.5, "gb": 0.3, "kh": 1.0, "km": 0.5, "share": 0.01},
-             "grid": {"wm": [0.25, 0.5, 1.0], "gb": [0.1, 0.3, 0.5], "kh": [0.5, 1.0, 1.5],
-                      "km": [0.0, 0.5, 1.0], "share": [0.005, 0.01, 0.02]}},
+             "default": {"wm": 0.5, "gb": 0.3, "kh": 1.0, "km": 0.5, "share": 0.04, "a0": 0.4},
+             "grid": {"wm": [0.25, 0.75], "gb": [0.1, 0.3, 0.5], "kh": [0.5, 1.0, 1.5],
+                      "km": [0.0, 0.5], "share": [0.02, 0.04, 0.08], "a0": [0.3, 0.4, 0.55]}},
 }
 IND_INFO = {
     "RSI (14)": "Relative Stärke der letzten 14 Kerzen. Unter 30 = überverkauft (Kauf), über 70 = überkauft (Verkauf).",
-    "Stochastic RSI": "Wo steht der RSI in seiner eigenen Spanne? Ganz unten = Kauf, ganz oben = Verkauf.",
-    "Williams %R": "Schlusskurs in der 14-Kerzen-Spanne. Nahe Tief = Kauf, nahe Hoch = Verkauf.",
-    "CCI (20)": "Abweichung vom Durchschnittspreis. Stark negativ = Kauf, stark positiv = Verkauf.",
-    "MFI (14)": "RSI mit Volumen. Niedrig = Geld abgeflossen (Kauf), hoch = überhitzt (Verkauf).",
     "Bollinger %B": "Lage zwischen den Bollinger-Bändern. Unteres Band = Kauf, oberes = Verkauf.",
     "Abstand EMA 50": "Wie weit liegt der Kurs unter/über dem 50er-Durchschnitt (in ATR gemessen)?",
     "Abstand SMA 200": "Wie weit liegt der Kurs unter/über dem langfristigen 200er-Durchschnitt?",
@@ -128,6 +126,14 @@ IND_INFO = {
                     "bisher nahe an großen Zyklus-Hochs.",
     "Halving-Phase": "Tage seit dem letzten Bitcoin-Halving. Bisher kamen die Hochs etwa 1–1,5 Jahre und die Tiefs etwa "
                      "2,5 Jahre danach. Nur bereits stattgefundene Halvings zählen. Achtung: nur 3–4 Zyklen als Erfahrung.",
+    "Funding-Rate": "Finanzierungsgebühr der Bitcoin-Futures (Binance). Sehr hoch = viele mit Hebel long (Verkauf), negativ = "
+                    "viele short (Kauf).",
+    "Abstand zum Allzeithoch": "Wie weit liegt der Coin unter seinem bisherigen Höchststand? Tief darunter = langfristig günstig.",
+    "Log-Trendkanal": "Lage im langfristigen logarithmischen Trendkanal des Coins (nur bisherige Daten). Unten im Kanal = günstig.",
+    "US-Geldmenge M2": "Jahreswachstum der US-Geldmenge (FRED, mit Veröffentlichungsverzug). Mehr Geld = Rückenwind (Kauf).",
+    "Stablecoin-Menge": "Wachstum aller Stablecoins in 30 Tagen (DefiLlama). Wachsende Menge = Kaufkraft wartet (Kauf).",
+    "Hash Ribbons": "Bitcoin-Hashrate (Blockchain.com): Miner geben auf und erholen sich wieder – historisch oft nahe großer Tiefs.",
+    "MVRV": "Marktwert geteilt durch realisierten Wert (Coin Metrics). Unter 1 = Anleger im Schnitt im Verlust (Kauf), über 3 = Euphorie.",
     "BTC-Dominanz": "Nur Altcoins. Steigt Bitcoin gegenüber den Altcoins, fließt Geld ab (Verkauf), fällt sie = Kauf. "
                     "Näherung aus den Top-20-Coins.",
 }
@@ -482,6 +488,51 @@ def fred_daily(series_id):
     return pd.Series(df["v"].values, index=idx, dtype=float)
 
 
+def blockchain_chart(name):
+    d = http_get(f"https://api.blockchain.info/charts/{name}", {"timespan": "all", "format": "json", "sampled": "false"},
+                 timeout=40)
+    v = d.get("values", [])
+    return pd.Series([float(x["y"]) for x in v], index=np.array([(int(x["x"]) // 86400) * 86400 for x in v], dtype="int64"))
+
+
+def stable_daily():
+    d = http_get("https://stablecoins.llama.fi/stablecoincharts/all", timeout=40)
+    rows = [((int(x["date"]) // 86400) * 86400, float((x.get("totalCirculatingUSD") or {}).get("peggedUSD") or 0)) for x in d]
+    rows = [r for r in rows if r[1] > 0]
+    return pd.Series([r[1] for r in rows], index=np.array([r[0] for r in rows], dtype="int64"))
+
+
+def mvrv_daily():
+    rows, url, params = [], "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics", \
+        {"assets": "btc", "metrics": "CapMVRVCur", "frequency": "1d", "page_size": 10000}
+    for _ in range(3):
+        d = http_get(url, params, tries=2, timeout=40)
+        rows += [(int(pd.Timestamp(x["time"]).timestamp()) // 86400 * 86400, float(x["CapMVRVCur"]))
+                 for x in d.get("data", []) if x.get("CapMVRVCur") not in (None, "")]
+        nxt = d.get("next_page_url")
+        if not nxt:
+            break
+        url, params = nxt, None
+    return pd.Series([r[1] for r in rows], index=np.array([r[0] for r in rows], dtype="int64"))
+
+
+def funding_daily():
+    """Funding-Rate der Bitcoin-Futures bei Binance, als Tagesmittel (seit Ende 2019)."""
+    rows, start = [], 1567296000000
+    for _ in range(12):
+        d = http_get("https://fapi.binance.com/fapi/v1/fundingRate",
+                     {"symbol": "BTCUSDT", "startTime": start, "limit": 1000}, tries=2)
+        if not d:
+            break
+        rows += [(int(x["fundingTime"]) // 1000, float(x["fundingRate"])) for x in d]
+        if len(d) < 1000:
+            break
+        start = int(d[-1]["fundingTime"]) + 1
+        time.sleep(0.3)
+    s = pd.Series([r[1] for r in rows], index=np.array([r[0] for r in rows], dtype="int64"))
+    return s.groupby((s.index // 86400) * 86400).mean()
+
+
 def load_macro():
     m = {}
     try:
@@ -505,6 +556,20 @@ def load_macro():
                     break
             except Exception as e:
                 log(f"{key}-Quelle fehlgeschlagen: {e}")
+    for key, fn, lag in (
+            ("m2", lambda: fred_daily("M2SL"), 55 * 86400),        # Monatswert, erscheint ca. 4 Wochen nach Monatsende
+            ("stable", stable_daily, 86400),
+            ("hash", lambda: blockchain_chart("hash-rate"), 86400),
+            ("mvrv", mvrv_daily, 86400),
+            ("funding", funding_daily, 86400)):
+        try:
+            s = fn().sort_index()
+            s = s[~s.index.duplicated(keep="last")].dropna()
+            if len(s) > 30:
+                m[key] = (s, lag)
+                log(f"{key}: {len(s)} Werte")
+        except Exception as e:
+            log(f"{key} nicht abrufbar: {e}")
     try:
         g = http_get("https://api.coingecko.com/api/v3/global")["data"]
         m["global"] = {"mcap": g["total_market_cap"].get("usd"),
@@ -574,6 +639,49 @@ def macro_scores(m, btc_daily):
         out["Dollar-Index (DXY)"] = (s.index.values + lag, (50 - 50 * np.tanh(z / 1.5)).values, z.values,
                                      lambda v: "Dollar stark (Gegenwind)" if v > 0.5 else "Dollar schwach (Rückenwind)"
                                      if v < -0.5 else "neutral", lambda v: f"{v:+.1f}", s.values)
+    if "m2" in m:
+        s, lag = m["m2"]
+        yoy = s / s.shift(12) - 1
+        out["US-Geldmenge M2"] = (s.index.values + lag, lin(yoy, 0.10, -0.02).values, yoy.values,
+                                  lambda v: "wächst stark (Rückenwind)" if v > 0.07 else "schrumpft (Gegenwind)" if v < 0
+                                  else "wächst langsam", lambda v: f"{v * 100:+.1f} % J/J", s.values / 1000)
+    if "stable" in m:
+        s, lag = m["stable"]
+        g = s / s.shift(30) - 1
+        out["Stablecoin-Menge"] = (s.index.values + lag, lin(g, 0.06, -0.04).values, g.values,
+                                   lambda v: "wächst – Kaufkraft wartet" if v > 0.02 else "schrumpft – Geld fließt ab" if v < -0.01
+                                   else "stabil", lambda v: f"{v * 100:+.1f} % / 30 T", s.values / 1e9)
+    if "hash" in m:
+        s, lag = m["hash"]
+        m30, m60 = s.rolling(30).mean(), s.rolling(60).mean()
+        cap = (m30 < m60).values
+        sc = np.full(len(s), 50.0)
+        last_rec = -10 ** 9
+        for i in range(1, len(s)):
+            if np.isnan(m60.values[i]):
+                sc[i] = np.nan
+                continue
+            if cap[i - 1] and not cap[i]:
+                last_rec = i                      # Erholung: 30er kreuzt den 60er wieder nach oben
+            if cap[i]:
+                sc[i] = 65.0                      # Miner-Kapitulation läuft
+            elif i - last_rec <= 120:
+                sc[i] = 50 + 40 * np.exp(-(i - last_rec) / 45)
+        rel = (m30 / m60 - 1).values
+        out["Hash Ribbons"] = (s.index.values + lag, sc, rel,
+                               lambda v: "Miner-Kapitulation" if v < 0 else "Hashrate wächst", lambda v: f"{v * 100:+.1f} %",
+                               s.values / 1e6)
+    if "mvrv" in m:
+        s, lag = m["mvrv"]
+        out["MVRV"] = (s.index.values + lag, lin(s, 1.0, 3.5).values, s.values,
+                       lambda v: "Anleger im Verlust – historisch günstig" if v < 1 else "Euphorie" if v > 3
+                       else "normal", lambda v: f"{v:.2f}", s.values)
+    if "funding" in m:
+        s, lag = m["funding"]
+        f7 = s.rolling(7, min_periods=3).mean()
+        out["Funding-Rate"] = (s.index.values + lag, lin(f7, -0.0001, 0.0005).values, f7.values,
+                               lambda v: "viele mit Hebel long (Verkauf)" if v > 0.0003 else "viele short (Kauf)" if v < 0
+                               else "normal", lambda v: f"{v * 100:.3f} %/8 h", s.values * 100)
     if "gold" in m and btc_daily is not None and len(btc_daily) > 400:
         g, lag = m["gold"]
         bt = pd.Series(btc_daily["c"].values, index=(btc_daily["t"].values // 86400) * 86400)
@@ -620,6 +728,38 @@ def btc_long_scores(btc_daily):
                             lambda v: f"{v / 365:.1f} J nach Halving – " + ("typische Hoch-Phase" if 350 < v < 620 else
                                                                            "typische Tief-Phase" if 760 < v < 1030 else "Übergang"),
                             lambda v: f"{v:.0f} T", days)
+    return out
+
+
+def coin_long_scores(daily):
+    """Langfristige Bewertung des Coins selbst aus seinen Tageskerzen (nur Daten bis zum jeweiligen Tag)."""
+    out = {}
+    if daily is None or len(daily) < 200:
+        return out
+    t = daily["t"].values
+    c = pd.Series(daily["c"].values, dtype=float)
+    h = pd.Series(daily["h"].values, dtype=float)
+    avail = t + 86400
+    dd = c / h.cummax() - 1
+    out["Abstand zum Allzeithoch"] = (avail, lin(dd, -0.85, -0.05).values, dd.values,
+                                      lambda v: "nahe Allzeithoch" if v > -0.1 else "tief darunter – langfristig günstig"
+                                      if v < -0.7 else "deutlich darunter", lambda v: f"{v * 100:.0f} %", dd.values * 100)
+    # Expandierender logarithmischer Trendkanal: log(Kurs) gegen log(Tage), jeweils nur bisherige Daten
+    y = np.log(c.values)
+    x = np.log(np.arange(len(y)) + 30.0)
+    n = np.arange(1, len(y) + 1)
+    sx, sy, sxx, sxy, syy = np.cumsum(x), np.cumsum(y), np.cumsum(x * x), np.cumsum(x * y), np.cumsum(y * y)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        Sxx, Sxy, Syy = sxx - sx * sx / n, sxy - sx * sy / n, syy - sy * sy / n
+        b = Sxy / Sxx
+        a = sy / n - b * sx / n
+        sd = np.sqrt(np.maximum(Syy - b * Sxy, 0) / np.maximum(n - 2, 1))
+        z = (y - a - b * x) / sd
+    z[n < 365] = np.nan
+    zs = pd.Series(z)
+    out["Log-Trendkanal"] = (avail, lin(zs, -1.5, 1.5).values, z,
+                             lambda v: "unten im Kanal – günstig" if v < -1 else "oben im Kanal – teuer" if v > 1 else "Mitte",
+                             lambda v: f"{v:+.1f} σ", z)
     return out
 
 
@@ -701,16 +841,17 @@ def combine(C, cfg, htf_base=None, mkt_base=None):
     return base, raw
 
 
-def to_score(raw, S, zy=None):
-    """Gestaffelter Score: normale Wendepunkte erreichen etwa 70–80 (bzw. 20–30). Nur wenn zusätzlich die
-    langfristigen Zyklus-Indikatoren in dieselbe Richtung zeigen, geht er bis über 90 (bzw. unter 10)."""
+def to_score(raw, S, zy=None, a0=0.6):
+    """Score = Zeitpunkt × Stärke.
+    Der kurzfristige Teil (Lage, Markt, Wende) bestimmt Richtung und Zeitpunkt. Wie weit der Score ausschlagen darf,
+    bestimmt die Langfrist-Gruppe: Ohne Rückenwind bleibt er bei normalen Wendepunkten gemäßigt (höchstens 50 ± 50·a0),
+    nur wenn auch die Langfrist-Bewertung extrem in dieselbe Richtung zeigt, geht er bis 0 bzw. 100."""
     d = raw * S
-    n = 35 * np.tanh(d / 0.6 * 0.9)
+    t = np.tanh(d / 0.6 * 0.9)
     with np.errstate(invalid="ignore"):
         L = np.nan_to_num((zy - 50) / 50) if zy is not None else np.zeros(len(d))
-        same = np.sign(L) == np.sign(d)
-        bonus = np.where(same, 15 * np.abs(L) * np.clip(np.abs(d) / 0.3, 0, 1) * np.sign(d), 5 * L)
-    return np.clip(50 + n + bonus, 0, 100)
+        amp = a0 + (1 - a0) * np.clip(L * np.sign(t), 0, 1)
+    return np.clip(50 + 50 * t * amp, 0, 100)
 
 
 def htf_map(C_low, C_high):
@@ -800,7 +941,7 @@ def evaluate(items, cfg, mode):
     for part in ("train", "test"):
         bn, sn, rets, lows, cbn, csn = [], [], [], 0, [], []
         for r, it in zip(raws, items):
-            sc = to_score(r, S, it["C"].get("zyklus"))
+            sc = to_score(r, S, it["C"].get("zyklus"), cfg.get("a0", 0.6))
             mask = it[part]
             buys, sells = signals(np.where(mask, sc, np.nan))
             n = len(sc)
@@ -890,15 +1031,12 @@ def calibrate(items, mode):
     S0, base_res = evaluate(items, d_cfg, mode)
     best = (d_cfg, S0, base_res)
     G = M["grid"]
-    for wm in G["wm"]:
-        for gb in G["gb"]:
-            for kh in G["kh"]:
-                for km in G["km"]:
-                    for sh in G["share"]:
-                        cfg = {"wm": wm, "gb": gb, "kh": kh, "km": km, "share": sh}
-                        S, r = evaluate(items, cfg, mode)
-                        if r["train"]["n"] >= 15 and r["train"]["obj"] > best[2]["train"]["obj"]:
-                            best = (cfg, S, r)
+    import itertools
+    for wm, gb, kh, km, sh, a0 in itertools.product(G["wm"], G["gb"], G["kh"], G["km"], G["share"], G["a0"]):
+        cfg = {"wm": wm, "gb": gb, "kh": kh, "km": km, "share": sh, "a0": a0}
+        S, r = evaluate(items, cfg, mode)
+        if r["train"]["n"] >= 15 and r["train"]["obj"] > best[2]["train"]["obj"]:
+            best = (cfg, S, r)
     cfg, S, r = best
     use = r["test"]["n"] >= 8 and r["test"]["obj"] >= base_res["test"]["obj"]
     ch = (cfg, S, r) if use else (d_cfg, S0, base_res)
@@ -991,13 +1129,6 @@ def components(df, macro, dom=None):
     ind = {
         "RSI (14)": (lin(rsi, 25, 75), rsi, f1,
                      lambda x: "überverkauft" if x < 30 else "überkauft" if x > 70 else "neutral"),
-        "Stochastic RSI": (lin(k, 10, 90), k, f1, lambda x: "ganz unten" if x < 15 else "ganz oben" if x > 85 else "Mitte"),
-        "Williams %R": (lin(wr, -90, -10), wr, f1,
-                        lambda x: "überverkauft" if x < -80 else "überkauft" if x > -20 else "neutral"),
-        "CCI (20)": (lin(cci, -200, 200), cci, lambda x: f"{x:.0f}",
-                     lambda x: "weit unter Schnitt" if x < -100 else "weit über Schnitt" if x > 100 else "normal"),
-        "MFI (14)": (lin(mfi, 15, 85), mfi, f1,
-                     lambda x: "Geld fließt stark ab" if x < 20 else "überhitzt" if x > 80 else "neutral"),
         "Bollinger %B": (lin(pctb, 0, 1), pctb, lambda x: f"{x:.2f}",
                          lambda x: "unteres Band" if x < 0.1 else "oberes Band" if x > 0.9 else "innerhalb"),
         "Abstand EMA 50": (lin(z50, -5, 5), z50, lambda x: f"{x:.1f} ATR",
@@ -1233,13 +1364,15 @@ def run(coins_loader=load_coins, macro_loader=load_macro, html=None):
     comps = []
     for meta, src, frames in loaded:
         cc = {}
+        own = dict(mscores)
+        own.update(coin_long_scores(frames.get("1d")))
         for tf, df in frames.items():
             if len(df) < SCORE_MIN:
                 continue
             dom = None
             if meta["sym"] != "BTC" and btc is not None and tf in btc:
                 dom = dominance_z(btc[tf], alt_df.get(tf), df["t"].values)
-            cc[tf] = components(df, mscores, dom)
+            cc[tf] = components(df, own, dom)
         comps.append(cc)
     log(f"Indikatoren berechnet nach {time.time() - started:.0f}s")
 
@@ -1323,15 +1456,15 @@ def run(coins_loader=load_coins, macro_loader=load_macro, html=None):
                 Cg = gm[mode][tf]
                 hb = take(bases[mode][htf], htf_map(C, cc[htf])) if htf in cc else None
                 mb = take(mode_idx[mode][tf], exact_index(idx_C[tf]["t"], C["t"])) if tf in idx_C else None
-                score = to_score(combine(Cg, cfg, hb, mb)[1], S, Cg["zyklus"])
+                score = to_score(combine(Cg, cfg, hb, mb)[1], S, Cg["zyklus"], cfg.get("a0", 0.6))
                 last = len(score) - 1
                 groups = {g: (None if np.isnan(Cg[k][last]) else round(float(Cg[k][last])))
                           for g, k in (("Lage", "lage"), ("Wende", "wende"), ("Markt", "markt"), ("Zyklus", "zyklus"))}
                 per_tf[tf][mode] = (score, groups)
                 scores[mode][tf] = (C["ct"], score)
                 if mode == "short":
-                    hv = to_score(hb, S)[-1] if hb is not None else np.nan
-                    mv = to_score(mb, S)[-1] if mb is not None else np.nan
+                    hv = to_score(hb, S, None, 1.0)[-1] if hb is not None else np.nan
+                    mv = to_score(mb, S, None, 1.0)[-1] if mb is not None else np.nan
                     extras[tf]["f"] = {"htf": [htf, None if np.isnan(hv) else round(float(hv))] if htf in cc else None,
                                        "mkt": None if np.isnan(mv) else round(float(mv))}
         prepared.append((meta, src, frames, cc, gm, per_tf, extras, scores))
@@ -1644,6 +1777,21 @@ li.row.sel{outline:2px solid var(--acc)}
 .trg3{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px;font-size:12.5px;color:var(--mut)}
 .trg3 input{width:60px}.trg3 .mut{opacity:.7}
 @media (max-width:420px){.trg{gap:6px}.trc{padding:8px;gap:5px}.trc label{font-size:10.5px}.trc .r2{flex-wrap:wrap}.trc .r2 input{width:100%}.trc input,.trc select{padding:5px 6px;font-size:13px}}
+.sec>details>summary{font-weight:700;font-size:14px;list-style-position:outside}
+.sec>details[open]>summary{margin-bottom:8px}
+#all tr.irow,#all tr.grow,.mem tr{cursor:pointer}
+#all tr.irow:active,#all tr.grow:active,.mem tr:active{background:var(--card2)}
+.lnk{color:var(--txt)}
+#all .gh .gs{float:right;color:var(--mut);font-weight:600;font-size:11.5px}
+.fh{display:flex;align-items:center;gap:8px;margin-bottom:8px}.fh h4{margin:0;font-size:17px}
+#ibox h5{margin:14px 0 4px;font-size:13.5px}
+#ibox p{font-size:13px;line-height:1.55;color:#c3c9d6;margin:4px 0}
+#ibox .grid4{margin-top:0}
+.mem{width:100%;border-collapse:collapse;font-size:12.5px}.mem td{padding:7px 4px;border-top:1px solid var(--line)}
+.mem small{color:var(--mut)}
+.cycbar{position:absolute;right:84px;top:3px;z-index:6;display:flex;gap:4px}
+.cyb{border:1px solid var(--c);background:transparent;color:var(--c);border-radius:7px;font-size:10.5px;font-weight:700;padding:2px 6px;opacity:.55}
+.cyb.on{background:var(--c);color:#0b0e14;opacity:1}
 </style>
 </head>
 <body>
@@ -1698,7 +1846,8 @@ li.row.sel{outline:2px solid var(--acc)}
     <div class="cwrap" id="cwrap"></div>
     <div class="msg" id="noz" style="display:none">Für diesen Zeitrahmen gibt es zu wenige Kerzen für einen eigenen Score – schalte auf „Gesamt“.</div>
   </div>
-  <div class="sec" id="trbox"><h4>Signale &amp; Tranchen</h4>
+  <div class="sec" id="ibox" style="display:none"><div id="ibody"></div></div>
+  <div class="sec" id="trbox"><details data-k="tr" open><summary>Signale &amp; Tranchen</summary>
     <div class="trg">
       <div class="trc"><b class="up">▲ Kauf</b>
         <label>Anzahl Tranchen<input type="number" id="bN" min="1" max="20" step="1"></label>
@@ -1719,8 +1868,8 @@ li.row.sel{outline:2px solid var(--acc)}
     <div class="trg3">Farbe der Score-Kurve: <span class="up">grün ab</span><input type="number" id="gUp" min="50" max="100" step="1">
       <span class="dn">rot unter</span><input type="number" id="gDn" min="0" max="50" step="1"><span class="mut">dazwischen grau</span></div>
     <p class="note" id="trnote" style="margin:8px 0 0"></p>
-  </div>
-  <div class="sec" id="simbox"><h4>Simulation (Backtest) mit diesen Signalen</h4>
+  </details></div>
+  <div class="sec" id="simbox"><details data-k="sim" open><summary>Simulation (Backtest) mit diesen Signalen</summary>
     <div class="simf">
       <label>Start<input type="date" id="simStart"></label>
       <label>Budget<input type="number" id="simBudget" min="1" step="100"></label>
@@ -1735,17 +1884,16 @@ li.row.sel{outline:2px solid var(--acc)}
     </div>
     <div class="grid3" id="simres" style="margin-top:10px"></div>
     <p class="note" id="simnote" style="margin:8px 0 0"></p>
-    <details style="margin-top:8px"><summary>Trade-Übersicht</summary><div class="tradew"><table id="trades"></table></div></details>
-  </div>
-  <div class="sec" id="statbox"><h4>Bilanz der Signale (gesamte Historie, Standard-Tranchen)</h4><div class="grid2" id="stat"></div><div class="grid4" id="stat2"></div></div>
-  <div class="sec" id="fbox"><h4>Filter &amp; Zyklen</h4><div class="grid2" id="filt"></div></div>
-  <div class="sec" id="catbox"><h4>Bestandteile</h4><div class="grid3" id="cats"></div></div>
-  <div class="sec" id="allbox"><details open><summary id="allsum">Alle Indikatoren</summary>
+    <details style="margin-top:8px" data-k="trades"><summary>Trade-Übersicht</summary><div class="tradew"><table id="trades"></table></div></details>
+  </details></div>
+  <div class="sec" id="statbox"><details data-k="stat" open><summary>Bilanz der Signale (gesamte Historie, Standard-Tranchen)</summary><div class="grid2" id="stat"></div><div class="grid4" id="stat2"></div></details></div>
+  <div class="sec" id="fbox"><details data-k="filt" open><summary>Filter &amp; Zyklen</summary><div class="grid2" id="filt"></div></details></div>
+  <div class="sec" id="allbox"><details data-k="all" open><summary id="allsum">Alle Indikatoren</summary>
     <div class="chips" id="isort" style="margin:8px 0 4px"><span class="lbl">Sortieren:</span>
       <button class="chip sm" data-s="group">Gruppe</button><button class="chip sm" data-s="weight">Gewichtung</button><button class="chip sm" data-s="score">Score</button></div>
     <table id="all"></table><p class="note" style="margin:6px 0 0" id="allnote"></p></details></div>
-  <div class="sec exp"><details><summary>Wie entsteht der Score?</summary><div class="expc"></div></details></div>
-  <p class="note">▲ Kauf = erster Eintritt in die Kaufzone je Runde. ▼ ⅓ / ⅔ / 3/3 = Verkauf in Tranchen bei Score 30 / 20 / 10.
+  <div class="sec exp" id="expbox"><details data-k="exp"><summary>Wie entsteht der Score?</summary><div class="expc"></div></details></div>
+  <p class="note" id="dnote">▲ Kauf / ▼ Verk. = Tranchen laut „Signale &amp; Tranchen“, mit Preis der Signal-Kerze. Tippe in der Indikator-Liste auf einen Indikator oder eine Gruppe für Chart und Erklärung.
   Der Score nutzt nur Daten bis zur jeweiligen Kerze. Senkrechte gestrichelte Linien = echte Hochs (rot) und Tiefs (grün),
   die erst im Nachhinein feststehen. Datenquelle: <span id="src"></span>. Keine Anlageberatung.</p>
   </div>
@@ -1922,14 +2070,23 @@ $('list').addEventListener('click', e => {
   if (li) { history.pushState({c: li.dataset.s}, '', '#' + encodeURIComponent(li.dataset.s)); openCoin(li.dataset.s); }
 });
 $('back').addEventListener('click', () => location.hash ? history.back() : closeCoin());
-window.addEventListener('popstate', () => { const s = decodeURIComponent(location.hash.slice(1)); s ? openCoin(s) : closeCoin(); });
+window.addEventListener('popstate', () => {
+  const h = parseHash();
+  if (!h.sym) return closeCoin();
+  const f = h.kind ? {kind: h.kind, name: h.name} : null;
+  if (cur && cur.data && cur.meta.s === h.sym) { focus = f; M = null; show(true); }
+  else openCoin(h.sym, f);
+});
 document.querySelectorAll('#sort .chip').forEach(b => b.classList.toggle('on', b.dataset.o === sortBy));
 
 // ---------------- Erklärung
 function explain(){
   const MD = D.modes[mode], cal = D.cal.modes[mode], cfg = cal.cfg, r = cal.res, d0 = cal.default;
   const names = Object.keys(D.info), grp = g => names.filter(k => D.go[k] === g);
-  const li = k => `<li><b>${esc(k)}</b> (Gewicht ${String(MD.w[k] ?? 1).replace('.', ',')}): ${esc(D.info[k])}</li>`;
+  const T0 = cur && cur.data && cur.data.tf[ctf] && cur.data.tf[ctf].b ? cur.data.tf[ctf].b : names.map(k => [k, D.go[k]]);
+  const WS = weightShares(T0), inT = k => T0.some(x => x[0] === k);
+  const gsum = g => T0.filter(x => x[1] === g).reduce((a, x) => a + (WS[x[0]] || 0), 0).toFixed(0);
+  const li = k => `<li><b>${esc(k)}</b> (${inT(k) ? (WS[k] || 0).toFixed(1).replace('.', ',') + ' %' : 'hier nicht verfügbar'}): ${esc(D.info[k])}</li>`;
   const p = x => Math.round(x * 100) + ' %';
   const calTxt = r ? `<p><b>Auto-Kalibrierung</b> (${new Date(D.cal.date).toLocaleDateString('de-DE')}, wöchentlich):
     Die Einstellungen wurden an der Historie der Top-40-Coins (${mode === 'long' ? '1 T + 1 W, zusätzlich gemessen an den fest hinterlegten Bitcoin-Zyklus-Hochs und -Tiefs' : '4 Std + 1 T'}) so gewählt, dass Kaufsignale <b>möglichst selten
@@ -1952,14 +2109,15 @@ function explain(){
   wenn die Kurse im Überlappungszeitraum übereinstimmen.</p>
   <p>Jeder Indikator wird für jede Kerze in einen <b>Teil-Score von 0 bis 100</b> umgerechnet (100 = Kaufen, 0 = Verkaufen):</p>
   <p><b>Insgesamt ${names.length} Indikatoren</b> in vier Gruppen.</p>
-  <p><b>1. Lage (${grp('Lage').length})</b> – Wie weit unten oder oben steht der Kurs?</p><ul>${grp('Lage').map(li).join('')}</ul>
-  <p><b>2. Markt (${grp('Markt').length})</b> (${p(cfg.wm / (1 + cfg.wm))} der Richtung) – Stimmung und Umfeld:</p><ul>${grp('Markt').map(li).join('')}</ul>
-  <p><b>3. Wende (${grp('Wende').length})</b> – Gibt es Zeichen, dass der Kurs dreht?</p><ul>${grp('Wende').map(li).join('')}</ul>
-  <p><b>4. Bitcoin-Zyklus (${grp('Zyklus').length})</b> – langfristige Bewertung aus dem Bitcoin-Kurs (gilt für alle Coins, normales Gewicht):</p><ul>${grp('Zyklus').map(li).join('')}</ul>
-  <p><b>Gestaffelter Score:</b> Lage, Markt und Wende ergeben einen Ausschlag bis etwa 80 (bzw. 20) – das reicht für normale
-  Zwischentiefs und -hochs. Nur wenn zusätzlich die Bitcoin-Zyklus-Gruppe in dieselbe Richtung zeigt, kommen bis zu 15 Punkte
-  dazu: Werte über 90 (bzw. unter 10) gibt es nur an großen Wendepunkten. Zeigt die Zyklus-Gruppe in die Gegenrichtung,
-  dämpft sie leicht (höchstens 5 Punkte).</p>
+  <p>Die Prozentangaben sind der ungefähre Anteil am Score${cur && cur.data ? ' für ' + esc(cur.meta.s) + ' im Zeitrahmen ' + TFL[ctf] : ''} – dieselben Werte wie in der Indikator-Tabelle.</p>
+  <p><b>1. Lage (${grp('Lage').length}, ${gsum('Lage')} %)</b> – Wie weit unten oder oben steht der Kurs?</p><ul>${grp('Lage').map(li).join('')}</ul>
+  <p><b>2. Markt (${grp('Markt').length}, ${gsum('Markt')} %)</b> (${p(cfg.wm / (1 + cfg.wm))} der Richtung) – Stimmung und Umfeld:</p><ul>${grp('Markt').map(li).join('')}</ul>
+  <p><b>3. Wende (${grp('Wende').length}, ${gsum('Wende')} %)</b> – Gibt es Zeichen, dass der Kurs dreht?</p><ul>${grp('Wende').map(li).join('')}</ul>
+  <p><b>4. Langfrist &amp; Zyklus (${grp('Zyklus').length}, ${gsum('Zyklus')} %)</b> – langfristige Bewertung: Bitcoin-Zyklus, Liquidität (M2, Stablecoins), Miner und die Lage des Coins zu seinem Allzeithoch und Trendkanal:</p><ul>${grp('Zyklus').map(li).join('')}</ul>
+  <p><b>Zeitpunkt × Stärke:</b> Lage, Markt und Wende bestimmen Richtung und Zeitpunkt. Wie weit der Score ausschlagen darf,
+  bestimmt die Langfrist-Gruppe: Ohne Rückenwind bleibt er bei normalen Zwischenhochs und -tiefs gemäßigt (höchstens etwa
+  ${Math.round(50 - 50 * (cfg.a0 ?? 0.6))}–${Math.round(50 + 50 * (cfg.a0 ?? 0.6))}). Nur wenn auch die Langfrist-Bewertung extrem in dieselbe Richtung zeigt,
+  geht er bis nahe 0 oder 100 – so stechen die großen Wendepunkte heraus. Der Grundausschlag ${String(cfg.a0 ?? 0.6).replace('.', ',')} wird mitkalibriert.</p>
   <p><b>Verbindung:</b> Lage und Markt bestimmen die <b>Richtung</b>, die Wende die <b>Bestätigung</b>. Fällt der Kurs noch
   („fallendes Messer“), wird das Signal auf ${p(Math.max(0.05, 2 * cfg.gb - 1))}–${p(cfg.gb)} gedämpft.
   Danach wird es mit dem <b>übergeordneten Zeitrahmen</b> (Stärke ${String(cfg.kh).replace('.', ',')}) und dem <b>Gesamtmarkt</b>
@@ -2054,8 +2212,8 @@ async function loadOlder(){
 }
 
 // ---------------- Indikator-Auswahl
-const REF = {'RSI (14)': [30, 70], 'Stochastic RSI': [20, 80], 'Williams %R': [-80, -20], 'CCI (20)': [-100, 100],
-  'MFI (14)': [20, 80], 'Bollinger %B': [0, 1], 'Fear & Greed': [25, 75], 'Zyklen': [-0.6, 0.6],
+const REF = {'RSI (14)': [30, 70], 
+  'MVRV': [1, 3.5], 'Abstand zum Allzeithoch': [-85, -5], 'Log-Trendkanal': [-1.5, 1.5], 'Bollinger %B': [0, 1], 'Fear & Greed': [25, 75], 'Zyklen': [-0.6, 0.6],
   'Score-Teil Lage': [40, 60], 'Score-Teil Wende': [40, 60], 'Score-Teil Markt': [40, 60], 'Score-Teil Zyklus': [40, 60],
   'BTC Mayer-Multiple': [0.8, 2.4], 'BTC Pi-Cycle': [0.45, 1], 'BTC 200-Wochen-Ø': [1, 4], 'Kreuz naht': [-0.3, 0.3],
   'Lage in 100-Kerzen-Spanne': [0.15, 0.85], 'Lage in 300-Kerzen-Spanne': [0.15, 0.85]};
@@ -2066,7 +2224,7 @@ function sheetList(){
     `<h4>Score-Bestandteile (4)</h4>${['Score-Teil Lage', 'Score-Teil Wende', 'Score-Teil Markt', 'Score-Teil Zyklus'].map(box).join('')}` +
     `<h4>Zyklen (1)</h4>${box('Zyklen')}` +
     ['Lage', 'Wende', 'Markt', 'Zyklus'].map(g => { const l = grp(g).filter(k => k !== 'Zyklen');
-      return `<h4>${g === 'Zyklus' ? 'Bitcoin-Zyklus' : g} (${l.length})</h4>` + l.map(box).join(''); }).join('');
+      return `<h4>${GNAMES[g]} (${l.length})</h4>` + l.map(box).join(''); }).join('');
 }
 $('addp').addEventListener('click', () => { sheetList(); $('sheet').classList.add('open'); });
 $('sheetl').addEventListener('change', e => {
@@ -2233,6 +2391,164 @@ function simulate(){
     : '<tr><td>Keine Signale im gewählten Zeitraum.</td></tr>';
 }
 
+// ---------------- Ausführliche Erklärungen zu jedem Indikator und jeder Gruppe
+const DOC = {
+ 'RSI (14)': ['Der Relative-Stärke-Index vergleicht die Aufwärts- mit den Abwärtsbewegungen der letzten 14 Kerzen und rechnet das in eine Zahl von 0 bis 100 um.',
+   'Unter 30 gilt der Kurs als überverkauft (zu stark gefallen), über 70 als überkauft. In starken Trends kann der RSI aber lange im Extrem bleiben – er zeigt eher an, dass eine Bewegung überdehnt ist, als wann sie endet.',
+   'RSI 25 → Teil-Score 100 (Kauf), RSI 75 → 0 (Verkauf), dazwischen gleitend. Er steht stellvertretend für die ganze Familie ähnlicher Oszillatoren (Stochastic, Williams %R, CCI, MFI), die sich fast gleich verhalten und deshalb entfernt wurden.'],
+ 'Bollinger %B': ['Die Bollinger-Bänder liegen zwei Standardabweichungen über und unter dem 20er-Durchschnitt. %B sagt, wo der Kurs zwischen den Bändern steht: 0 = unteres Band, 1 = oberes Band.',
+   'Am unteren Band ist der Kurs im Verhältnis zur aktuellen Schwankung weit gefallen, am oberen weit gestiegen. Bei Ausbrüchen läuft der Kurs aber oft am Band entlang.',
+   '%B 0 → Teil-Score 100, %B 1 → 0.'],
+ 'Abstand EMA 50': ['Wie weit ist der Kurs vom exponentiellen 50er-Durchschnitt entfernt – gemessen in ATR (der typischen Schwankung je Kerze)?',
+   'Weit darunter = stark gefallen, oft folgt eine Rückkehr zum Durchschnitt. Weit darüber = überhitzt. Durchschnitte laufen dem Kurs hinterher, der Abstand ist deshalb eher ein Lage- als ein Zeitpunkt-Indikator.',
+   '−5 ATR → 100, +5 ATR → 0.'],
+ 'Abstand SMA 200': ['Abstand zum einfachen 200er-Durchschnitt, dem bekanntesten Langfrist-Durchschnitt, ebenfalls in ATR.',
+   'Ein Kurs deutlich unter dem 200er gilt als günstig, deutlich darüber als heiß gelaufen. Bei Coins mit wenig Historie fehlt er anfangs.',
+   '−12 ATR → 100, +12 ATR → 0.'],
+ 'Lage in 100-Kerzen-Spanne': ['Wo liegt der Schlusskurs zwischen dem tiefsten Tief und dem höchsten Hoch der letzten 100 Kerzen?',
+   '0 % = am Tief, 100 % = am Hoch. Einfach und robust, aber rein rückblickend: Ein neues Tief zeigt immer 0 %.',
+   '0 % → 100, 100 % → 0. Einer der stärksten Bausteine der Lage-Gruppe.'],
+ 'Lage in 300-Kerzen-Spanne': ['Wie oben, aber über 300 Kerzen – erkennt also die größeren Tiefs und Hochs.',
+   'Auf dem Tageschart entspricht das etwa einem Jahr. Ein Wert nahe 0 % bedeutet: so günstig wie seit langem nicht.',
+   '0 % → 100, 100 % → 0. Im Modus „Langfristig“ besonders stark gewichtet.'],
+ 'Zyklen': ['Zyklenanalyse: Aus den letzten bis zu 400 Kerzen werden die drei Wellenlängen gesucht, die am besten zum Kursverlauf passen (Fourier-Analyse), und als Sinuswellen nach vorne gerechnet.',
+   'Steht die Summe der Wellen nahe ihrem Tief, „ist ein Anstieg fällig“ – laut Zyklen. Im Zyklen-Fenster siehst du die drei Einzelwellen und ihren Durchschnitt, auch in die Zukunft fortgeschrieben. Achtung: Für die Vergangenheit sind die Wellen dort mit heutigem Wissen gezeichnet.',
+   'Für den Score wird alle 10 Kerzen neu angepasst, nur mit Daten bis dahin. Wellen-Tief → 100, Wellen-Hoch → 0.'],
+ 'MACD dreht': ['Der MACD ist der Abstand zwischen 12er- und 26er-Durchschnitt, das Histogramm dessen Abstand zu seiner Signallinie. Hier zählt nur, ob das Histogramm gerade wächst oder schrumpft.',
+   'Dreht das Histogramm im Minus nach oben, verliert der Abwärtsdruck an Kraft – ein frühes Wendezeichen.',
+   'Starkes Hochdrehen → bis 100, Runterdrehen → bis 0. Gruppe Wende (Bestätigung).'],
+ 'RSI-Divergenz': ['Vergleicht die letzten 14 Kerzen mit den 14 davor: Macht der Kurs ein tieferes Tief, der RSI aber ein höheres, ist das eine bullische Divergenz (umgekehrt am Hoch bärisch).',
+   'Divergenzen zeigen nachlassende Kraft einer Bewegung und gehören zu den wenigen eher vorauslaufenden Signalen – sie können aber mehrfach hintereinander auftreten, bevor der Kurs dreht.',
+   'Bullische Divergenz → bis 95, bärische → bis 5, sonst 50.'],
+ 'Stoch-RSI Kreuzung': ['Der Stochastic RSI zeigt, wo der RSI in seiner eigenen Spanne steht. Er hat eine schnelle Linie (K) und eine langsame (D).',
+   'Kreuzt K die D-Linie nach oben, dreht das kurzfristige Momentum hoch – sehr früh, aber auch oft falsch.',
+   'K über D → über 50, K unter D → unter 50. Gruppe Wende.'],
+ 'RSI-Schwung (3)': ['Wie stark hat sich der RSI in den letzten 3 Kerzen verändert?',
+   'Steigt der RSI wieder, kommt Kaufdruck zurück. Zusammen mit einer tiefen Lage ist das ein typisches Wendezeichen.',
+   '+8 RSI-Punkte → etwa 88, −8 → etwa 12.'],
+ 'Erholung vom Tief': ['Hat sich der Kurs schon vom Tief der letzten 6 Kerzen gelöst (bzw. vom Hoch), gemessen in ATR?',
+   'Verhindert das „Greifen ins fallende Messer“: Ein Kaufsignal soll erst kommen, wenn der Kurs nicht mehr weiter fällt.',
+   'Deutlich vom Tief abgehoben → über 50, vom Hoch abgerutscht → unter 50. Wichtigster Baustein der Wende-Gruppe.'],
+ 'Volumen-Klimax': ['Sucht Kerzen mit sehr hohem Volumen (mehr als 1,3-fach des 20er-Schnitts).',
+   'Eine rote Kerze mit Rekordvolumen ist oft ein Ausverkauf (Kapitulation) nahe am Tief, eine grüne mit Rekordvolumen ein Kaufrausch nahe am Hoch.',
+   'Ausverkauf → über 50, Kaufrausch → unter 50.'],
+ 'Kreuz naht': ['Beobachtet, ob sich EMA 20 und SMA 50 bzw. SMA 50 und SMA 200 aufeinander zubewegen und bald kreuzen werden (Golden Cross / Death Cross).',
+   'Ein absehbares bullisches Kreuz zeigt, dass der kurzfristige Trend den langfristigen einholt. Kreuzungen selbst laufen dem Kurs hinterher – darum zählt hier schon die Annäherung.',
+   'Bullisches Kreuz in Sicht → über 50, bärisches → unter 50.'],
+ 'Kerzen-Docht': ['Vergleicht den unteren und den oberen Docht der letzten beiden Kerzen.',
+   'Ein langer unterer Docht heißt: Der Kurs war tief, Käufer haben ihn wieder hochgekauft (Abweisung). Ein langer oberer Docht das Gegenteil.',
+   'Abweisung unten → über 50, oben → unter 50.'],
+ 'Fear & Greed': ['Der Crypto Fear & Greed Index (alternative.me) fasst Stimmung, Volatilität, Volumen und soziale Medien in einer Zahl von 0 (extreme Angst) bis 100 (extreme Gier) zusammen.',
+   'Antizyklisch gelesen: Wenn alle Angst haben, ist oft viel Schlechtes eingepreist; bei extremer Gier ist der Markt anfällig.',
+   'Index 15 → Teil-Score 100, Index 85 → 0. Gilt für alle Coins gleich.'],
+ 'Dollar-Index (DXY)': ['Der Dollar-Index misst den US-Dollar gegen einen Korb großer Währungen. Hier zählt der Abstand zu seinem 50-Tage-Durchschnitt.',
+   'Ein steigender Dollar entzieht riskanten Anlagen wie Krypto meist Geld, ein fallender hilft.',
+   'Dollar deutlich über Schnitt → unter 50, darunter → über 50.'],
+ 'US-Geldmenge M2': ['M2 ist die Geldmenge in den USA (Bargeld, Konten, Spareinlagen), monatlich von der US-Notenbank veröffentlicht (FRED). Gemessen wird das Wachstum gegenüber dem Vorjahr.',
+   'Mehr Geld im System sucht Anlagemöglichkeiten – Bitcoin folgte dem Geldmengenwachstum in der Vergangenheit oft mit einigen Wochen bis Monaten Verzögerung. Das ist aber umstritten.',
+   '+10 % pro Jahr → 100, −2 % → 0. Jeder Monatswert zählt erst ab ca. 8 Wochen nach Monatsbeginn (Veröffentlichungsverzug).'],
+ 'Stablecoin-Menge': ['Gesamtwert aller Stablecoins (DefiLlama) und sein Wachstum in 30 Tagen.',
+   'Stablecoins sind „geparktes“ Geld im Kryptomarkt. Wächst ihre Menge, steht frische Kaufkraft bereit; schrumpft sie, fließt Geld ab.',
+   '+6 % in 30 Tagen → 100, −4 % → 0.'],
+ 'Hash Ribbons': ['Vergleicht den 30- und 60-Tage-Durchschnitt der Bitcoin-Hashrate (Rechenleistung der Miner, Blockchain.com).',
+   'Fällt der 30er unter den 60er, geben unrentable Miner auf („Kapitulation“). Kreuzt er wieder nach oben, ist die Kapitulation vorbei – historisch oft nahe an großen Tiefs.',
+   'Während der Kapitulation 65, direkt nach der Erholung bis 90 (klingt über ca. 3 Monate ab), sonst 50.'],
+ 'MVRV': ['Marktwert geteilt durch realisierten Wert (Coin Metrics): Der realisierte Wert bewertet jeden Bitcoin zu dem Preis, zu dem er zuletzt bewegt wurde – also ungefähr zum durchschnittlichen Einstandspreis aller Anleger.',
+   'Unter 1 sind die Anleger im Schnitt im Verlust (historisch Kaufzonen), über 3 bis 3,5 in großem Gewinn (historisch Nähe von Zyklus-Hochs).',
+   'MVRV 1 → 100, MVRV 3,5 → 0. Nur verfügbar, wenn die kostenlose Coin-Metrics-Schnittstelle den Wert liefert.'],
+ 'Funding-Rate': ['Die Finanzierungsgebühr, die Inhaber von Bitcoin-Futures (Binance) alle 8 Stunden zahlen. Ist sie positiv, zahlen die Käufer (Long) an die Verkäufer.',
+   'Sehr hohe Funding-Rates zeigen, dass viele mit Hebel auf steigende Kurse setzen – das endet oft in einer Liquidationswelle nach unten. Negative Rates zeigen das Gegenteil.',
+   '7-Tage-Mittel −0,01 % → 100, +0,05 % → 0. Fehlt, wenn Binance-Futures vom Server aus gesperrt sind.'],
+ 'Bitcoin/Gold': ['Der Bitcoin-Preis gemessen in Unzen Gold, verglichen mit seinem Durchschnitt des letzten Jahres (Standardabweichungen).',
+   'Bitcoin billig im Vergleich zu Gold = relativ günstig, teuer = relativ heiß gelaufen.',
+   '−1,5 σ → etwa 90, +1,5 σ → etwa 10.'],
+ 'BTC-Dominanz': ['Nur für Altcoins: Wie entwickelt sich Bitcoin gegenüber einem Index der größten Altcoins (Näherung für die Bitcoin-Dominanz)?',
+   'Steigt die Dominanz, fließt Geld aus Altcoins in Bitcoin – schlecht für Altcoins. Fällt sie, beginnt oft eine „Altcoin-Saison“.',
+   'Dominanz deutlich steigend → unter 50, fallend → über 50.'],
+ 'BTC 200-Wochen-Ø': ['Bitcoin-Kurs geteilt durch seinen 200-Wochen-Durchschnitt (ca. 4 Jahre).',
+   'Der 200-Wochen-Durchschnitt war in allen bisherigen Bärenmärkten ungefähr der Boden. Das 4- bis 15-Fache davon lag nahe an Zyklus-Hochs.',
+   '1× → 100, 4× → 0 (logarithmisch). Gilt für alle Coins.'],
+ 'BTC Mayer-Multiple': ['Bitcoin-Kurs geteilt durch seinen 200-Tage-Durchschnitt.',
+   'Unter 0,8 war Bitcoin historisch günstig, über 2,4 überhitzt.',
+   '0,8 → 100, 2,4 → 0.'],
+ 'BTC Pi-Cycle': ['Verhältnis des 111-Tage-Durchschnitts zum doppelten 350-Tage-Durchschnitt.',
+   'Erreichte der Wert 1 (die Linien kreuzten sich), lag das in früheren Zyklen nur wenige Tage neben dem Zyklus-Hoch. Ob das künftig so bleibt, ist offen.',
+   '0,45 → 100, 1,0 → 0.'],
+ 'Halving-Phase': ['Tage seit dem letzten Bitcoin-Halving (Halbierung der Mining-Belohnung, etwa alle 4 Jahre).',
+   'Bisher kamen die Zyklus-Hochs etwa 1–1,5 Jahre nach dem Halving und die Tiefs etwa 2,5 Jahre danach. Das beruht auf nur 3–4 Zyklen – entsprechend vorsichtig zu sehen.',
+   'Typische Hoch-Phase → unter 50, typische Tief-Phase → über 50. Nur bereits stattgefundene Halvings zählen.'],
+ 'Abstand zum Allzeithoch': ['Wie weit liegt der Coin unter seinem bisherigen Höchststand (nur bis zum jeweiligen Tag)?',
+   'Bei −70 % bis −85 % lagen viele Coins in früheren Bärenmärkten am Boden. Nahe am Allzeithoch ist der Kurs langfristig teuer – kann aber natürlich weiter steigen.',
+   '−85 % → 100, −5 % → 0. Wird aus den Tageskerzen des Coins selbst berechnet.'],
+ 'Log-Trendkanal': ['Ein langfristiger Trendkanal: Der logarithmierte Kurs wird gegen die logarithmierte Zeit eingepasst (wie das bekannte Bitcoin-„Power-Law“), jeweils nur mit den Daten bis zum Tag.',
+   'Liegt der Kurs weit unter der Trendlinie, ist er gemessen an seiner bisherigen Entwicklung günstig, weit darüber teuer.',
+   '−1,5 Standardabweichungen → 100, +1,5 → 0. Braucht mindestens ein Jahr Historie.'],
+};
+const GDOC = {
+ Lage: ['Die Lage-Gruppe beantwortet: Wie weit unten oder oben steht der Kurs gerade – im Vergleich zu den letzten Wochen und Monaten?',
+   'Zusammen mit der Markt-Gruppe bestimmt sie die Richtung des Scores (Kaufen oder Verkaufen). Sie misst eher den Zustand als den Zeitpunkt: Ein Kurs kann lange „günstig“ bleiben.'],
+ Markt: ['Die Markt-Gruppe misst das Umfeld außerhalb des einzelnen Coins: Stimmung (Fear & Greed), Hebel am Futures-Markt (Funding), den Dollar, Bitcoin gegenüber Gold und bei Altcoins die Bitcoin-Dominanz.',
+   'Sie fließt mit dem kalibrierten Anteil in die Richtung des Scores ein. Für alle Coins gleich – außer der Dominanz.'],
+ Wende: ['Die Wende-Gruppe beantwortet: Gibt es erste Zeichen, dass der Kurs dreht? (MACD, Divergenzen, Erholung vom Tief, Volumen, Zyklen, nahende Kreuzungen.)',
+   'Sie bestimmt den Zeitpunkt: Zeigt die Lage „günstig“, aber der Kurs fällt noch, wird das Signal gedämpft („fallendes Messer“). Erst wenn die Wende bestätigt, zählt es voll.'],
+ Zyklus: ['Die Langfrist-Gruppe (Bitcoin-Zyklus, Liquidität und langfristige Bewertung des Coins) beantwortet: Ist gerade ein großer Wendepunkt möglich?',
+   'Sie bestimmt die Stärke des Ausschlags: Ohne langfristigen Rückenwind bleibt der Score bei normalen Zwischenhochs und -tiefs gemäßigt. Nur wenn auch diese Gruppe extrem in dieselbe Richtung zeigt, geht er bis nahe 0 oder 100 – so sollen die großen Wendepunkte herausstechen.'],
+};
+
+const GNAMES = {Lage: 'Lage', Markt: 'Markt', Wende: 'Wende', Zyklus: 'Langfrist & Zyklus'};
+// Auf- und Zuklappen merken
+document.querySelectorAll('details[data-k]').forEach(d => {
+  const v = store('open_' + d.dataset.k); if (v != null) d.open = v === '1';
+  d.addEventListener('toggle', () => store('open_' + d.dataset.k, d.open ? '1' : '0'));
+});
+// Eigene Seite für einen Indikator oder eine Gruppe
+let focus = null;
+function parseHash(){
+  const p = decodeURIComponent(location.hash.slice(1)).split('|');
+  return {sym: p[0] || null, kind: p[1] || null, name: p[2] || null};
+}
+function openFocus(kind, name){
+  if (!cur) return;
+  history.pushState(null, '', '#' + encodeURIComponent(cur.meta.s + '|' + kind + '|' + name));
+  focus = {kind, name}; M = null; $('detail').scrollTop = 0; $('dmain').scrollTop = 0; show(true);
+}
+$('all').addEventListener('click', e => {
+  const r = e.target.closest('tr.irow'), g = e.target.closest('tr.grow');
+  if (r) openFocus('ind', r.dataset.n); else if (g) openFocus('grp', g.dataset.g);
+});
+$('ibody').addEventListener('click', e => { const a = e.target.closest('[data-n]'); if (a) openFocus('ind', a.dataset.n); });
+function renderFocus(T){
+  const b = T.b || [], ws = weightShares(b), K = T['k' + sfx()] || {};
+  const sec = (t, x) => x ? `<h5>${t}</h5><p>${x}</p>` : '';
+  let html;
+  if (focus.kind === 'ind') {
+    const x = b.find(r => r[0] === focus.name), d = DOC[focus.name] || [D.info[focus.name] || '', '', ''], g = D.go[focus.name];
+    html = `<div class="fh"><h4>${esc(focus.name)}</h4><span class="gtag">${GNAMES[g] || ''}</span></div>
+      <div class="grid4">
+        <div class="cat">Wert<b>${x ? esc(x[3]) : '–'}</b>${x ? esc(x[4]) : 'hier nicht verfügbar'}</div>
+        <div class="cat">Teil-Score<b style="color:${color(x && x[2])}">${x ? x[2] : '–'}</b>${x ? label(x[2]) : ''}</div>
+        <div class="cat">Anteil am Score<b>${x ? (ws[x[0]] || 0).toFixed(1).replace('.', ',') + ' %' : '–'}</b>${TFL[ctf]} · ${esc(D.modes[mode].label)}</div>
+      </div>
+      ${sec('Was misst er?', d[0])}${sec('Wie liest man ihn?', d[1])}${sec('So fließt er in den Score ein', d[2])}
+      <p class="note">Im Chart: lila Linie = der Indikator selbst, Hintergrund = sein Teil-Score (grün ab ${TR.gUp}, rot unter ${TR.gDn}).
+      Die gestrichelten Linien markieren die echten Hochs und Tiefs – so siehst du, ob er dort ausgeschlagen hat.</p>`;
+  } else {
+    const g = focus.name, mem = b.filter(r => r[1] === g).sort((p, q) => (ws[q[0]] || 0) - (ws[p[0]] || 0)), d = GDOC[g] || ['', ''];
+    const share = mem.reduce((a, r) => a + (ws[r[0]] || 0), 0);
+    html = `<div class="fh"><h4>${GNAMES[g]}</h4><span class="gtag">Gruppe · ${mem.length} Indikatoren</span></div>
+      <div class="grid4">
+        <div class="cat">Gruppen-Score<b style="color:${color(K[g])}">${K[g] ?? '–'}</b>${label(K[g])}</div>
+        <div class="cat">Anteil am Score<b>${share.toFixed(0)} %</b>${TFL[ctf]} · ${esc(D.modes[mode].label)}</div>
+      </div>
+      ${sec('Was macht diese Gruppe?', d[0])}${sec('Welche Rolle spielt sie im Score?', d[1])}
+      <h5>Indikatoren dieser Gruppe</h5>
+      <table class="mem">${mem.map(r => `<tr data-n="${esc(r[0])}"><td><span class="lnk">${esc(r[0])} ›</span><br><small>${esc(r[4])}</small></td>
+        <td class="v">${(ws[r[0]] || 0).toFixed(1).replace('.', ',')} %</td><td class="v"><b style="color:${color(r[2])}">${r[2]}</b></td></tr>`).join('')}</table>
+      <p class="note">Im Chart: Verlauf des Gruppen-Scores (grün ab ${TR.gUp}, rot unter ${TR.gDn}).</p>`;
+  }
+  $('ibody').innerHTML = html;
+}
+
 // ---------------- Detail
 function destroy(){ if (G) G.charts.forEach(c => c.chart.remove()); G = null; }
 function closeCoin(){ if (desktop() && D.coins.length) { openCoin(D.coins[0].s); return; }
@@ -2241,10 +2557,11 @@ $('tfc').innerHTML = D.tfs.map(([k, l]) => `<button class="chip" data-t="${k}">$
 $('tfc').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b && !b.disabled) { ctf = b.dataset.t; store('ctf', ctf); view = null; M = null; show(); } });
 function header(){
   const meta = cur.meta;
-  $('dt').textContent = landscape() ? meta.s : meta.s + ' · ' + meta.n;
+  $('dt').textContent = focus ? meta.s + ' · ' + (focus.kind === 'grp' ? GNAMES[focus.name] : focus.name) : landscape() ? meta.s : meta.s + ' · ' + meta.n;
   $('ds').innerHTML = price(toC(meta.p)) + ' <span class="' + (meta.ch >= 0 ? 'up' : 'dn') + '">' + pct(meta.ch) + '</span> · #' + meta.r;
 }
-async function openCoin(sym){
+async function openCoin(sym, f){
+  focus = f || null;
   const meta = D.coins.find(x => x.s === sym); if (!meta) return closeCoin();
   destroy(); view = null; M = null;
   $('detail').classList.add('open'); $('dmain').scrollTop = 0; $('detail').scrollTop = 0;
@@ -2272,8 +2589,9 @@ function convT(T){
   return Object.assign({}, T, {c: T._eur});
 }
 function waitLib(cb, n){ if (window.LightweightCharts) cb(); else if ((n || 0) < 100) setTimeout(() => waitLib(cb, (n || 0) + 1), 100); }
+const activePanes = () => focus ? [focus.kind === 'ind' ? focus.name : 'Score-Teil ' + focus.name] : panes;
 async function loadInd(T){
-  if (!panes.length || !T.ind) return null;
+  if (!activePanes().length || !T.ind) return null;
   const key = cur.meta.f + '_' + ctf;
   if (!indCache[key]) {
     try { const r = await fetch('data/ind/' + key + '.json?v=' + encodeURIComponent(D.updated)); indCache[key] = r.ok ? await r.json() : {v: {}}; }
@@ -2292,10 +2610,14 @@ async function show(keep){
   const s = mode === 'long' ? cur.meta.gl : cur.meta.g, col = color(s);
   $('dsc').innerHTML = `<small style="display:block;font-size:9px;font-weight:600;opacity:.8">Gesamt</small>${s == null ? '–' : Math.round(s)}`;
   $('dsc').style.color = col; $('dsc').style.background = col + '22';
-  ['fbox', 'catbox', 'allbox', 'statbox'].forEach(id => $(id).style.display = ownZ && T.b ? '' : 'none');
+  ['fbox', 'allbox', 'statbox'].forEach(id => $(id).style.display = ownZ && T.b && !focus ? '' : 'none');
+  ['trbox', 'simbox', 'expbox', 'dnote'].forEach(id => $(id).style.display = focus ? 'none' : '');
+  $('ibox').style.display = focus ? '' : 'none';
+  if (focus) renderFocus(T);
   $('noz').style.display = hasZ ? 'none' : '';
   syncOpts();
-  if (ownZ && T.b) details(T);
+  if (ownZ && T.b && !focus) details(T);
+  explain();
   if (!keep) M = null;
   const ind = await loadInd(T);
   const Tc = convT(T);
@@ -2316,11 +2638,7 @@ function details(T){
   const cyp = (T.cyp || []).map(p => p[0]).join(' / ');
   $('filt').innerHTML = (f.htf ? `<div class="cat">Übergeordnet (${TFL[f.htf[0]]})<b style="color:${color(f.htf[1])}">${f.htf[1] ?? '–'}</b>${label(f.htf[1])}</div>` : '<div class="cat">Übergeordnet<b>–</b>nicht vorhanden</div>') +
     `<div class="cat">Gesamtmarkt (Top 20)<b style="color:${color(f.mkt)}">${f.mkt ?? '–'}</b>${label(f.mkt)}</div>` +
-    `<div class="cat" style="grid-column:1/3">Stärkste Zyklen (Wellenlänge)<b>${cyp ? cyp + ' Kerzen' : '–'}</b>${cyp ? '≈ ' + (T.cyp || []).map(p => dur(p[0] * SEC[ctf])).join(' / ') : ''}</div>`;
-  $('cats').innerHTML = ['Lage', 'Markt', 'Wende', 'Zyklus'].map(g => {
-    const v = k[g]; if (v == null) return `<div class="cat">${g}<b>–</b></div>`;
-    return `<div class="cat">${g}<b style="color:${color(v)}">${v}</b><div class="bar"><i style="width:${v}%;background:${color(v)}"></i></div></div>`;
-  }).join('');
+    `<div class="cat" style="grid-column:1/3">Stärkste Zyklen (Wellenlänge)<b>${cyp ? cyp + ' Kerzen' : '–'}</b>${cyp ? (T.cyp || []).map(p => { const d = dur(p[0] * SEC[ctf]); return d.startsWith('≈') ? d : '≈ ' + d; }).join(' / ') : ''}</div>`;
   indTable(T);
 }
 // Ungefährer Anteil jedes Indikators am Score: Lage + Markt bilden die Richtung (≈ 70 %, aufgeteilt nach dem
@@ -2339,22 +2657,32 @@ $('isort').addEventListener('click', e => { const b = e.target.closest('.chip');
 function indTable(T){
   if (!T || !T.b) return;
   document.querySelectorAll('#isort .chip').forEach(b => b.classList.toggle('on', b.dataset.s === isort));
-  const G4 = ['Lage', 'Markt', 'Wende', 'Zyklus'], NAMES = {Lage: 'Lage', Markt: 'Markt', Wende: 'Wende', Zyklus: 'Bitcoin-Zyklus'};
+  const G4 = ['Lage', 'Markt', 'Wende', 'Zyklus'], K = T['k' + sfx()] || {};
   const ws = weightShares(T.b), cnt = g => T.b.filter(x => x[1] === g).length;
   $('allsum').textContent = `Alle Indikatoren (${T.b.length})`;
   const head = `<tr class="ih"><th>Indikator</th><th class="v">Wert</th><th class="v">Gewicht</th><th class="v">Score</th></tr>`;
-  const row = x => `<tr><td>${esc(x[0])}${isort !== 'group' ? ` <small class="gtag">${NAMES[x[1]]}</small>` : ''}<br><span style="color:var(--mut);font-size:11px">${esc(x[4])}</span></td>
+  const row = x => `<tr class="irow" data-n="${esc(x[0])}"><td><span class="lnk">${esc(x[0])} ›</span>${isort !== 'group' ? ` <small class="gtag">${GNAMES[x[1]]}</small>` : ''}<br><span style="color:var(--mut);font-size:11px">${esc(x[4])}</span></td>
      <td class="v">${esc(x[3])}</td><td class="v">${(ws[x[0]] || 0).toFixed(1).replace('.', ',')} %</td>
      <td class="v"><span class="mini"><i style="width:${x[2]}%;background:${color(x[2])}"></i></span> <b style="color:${color(x[2])}">${x[2]}</b></td></tr>`;
   let html = head;
-  if (isort === 'group') html += G4.filter(cnt).map(g => `<tr><td colspan="4" class="gh">${NAMES[g]} (${cnt(g)})
-      <span>${(T.b.filter(x => x[1] === g).reduce((a, x) => a + (ws[x[0]] || 0), 0)).toFixed(0)} %</span></td></tr>` + T.b.filter(x => x[1] === g).map(row).join('')).join('');
+  if (isort === 'group') html += G4.filter(cnt).map(g => `<tr class="grow" data-g="${g}"><td colspan="4" class="gh"><span class="lnk">${GNAMES[g]} (${cnt(g)}) ›</span>
+      <span class="gs">${(T.b.filter(x => x[1] === g).reduce((a, x) => a + (ws[x[0]] || 0), 0)).toFixed(0)} % · Score <b style="color:${color(K[g])}">${K[g] ?? '–'}</b></span></td></tr>` + T.b.filter(x => x[1] === g).map(row).join('')).join('');
   else html += [...T.b].sort((a, b) => isort === 'weight' ? (ws[b[0]] || 0) - (ws[a[0]] || 0) : b[2] - a[2]).map(row).join('');
   $('all').innerHTML = html;
-  $('allnote').textContent = 'Gewicht = ungefährer Anteil am Score: Lage und Markt bilden die Richtung (zusammen etwa 70 %), die Wende die Bestätigung (etwa 20 %), der Bitcoin-Zyklus den Zusatz-Ausschlag (etwa 10 %); innerhalb jeder Gruppe nach den kalibrierten Gewichten verteilt. Score: 100 = spricht für Kaufen, 0 = für Verkaufen.';
+  $('allnote').textContent = 'Gewicht = ungefährer Anteil am Score: Lage und Markt bilden die Richtung (zusammen etwa 70 %), die Wende den Zeitpunkt (etwa 20 %), die Langfrist-Gruppe die Stärke des Ausschlags (etwa 10 %); innerhalb jeder Gruppe nach den kalibrierten Gewichten verteilt. Score: 100 = spricht für Kaufen, 0 = für Verkaufen. Tippe auf eine Zeile für Chart und Erklärung.';
 }
 
 // ---------------- Charts: Kurs, Score und gewählte Indikatoren untereinander
+// Schalter im Zyklen-Fenster: drei Einzelwellen und ihr Durchschnitt
+const CYC_COL = ['#38bdf8', '#f472b6', '#facc15'];
+let cyt = {z0: true, z1: true, z2: true, avg: true}; try { Object.assign(cyt, JSON.parse(store('cyt') || '{}')); } catch (e) {}
+function cycBar(){
+  const T = cur.data.tf[ctf], f = T.cyf; if (!f) return '';
+  return `<div class="cycbar">${f.w.map((w, q) => `<button class="cyb${cyt['z' + q] ? ' on' : ''}" data-z="z${q}" style="--c:${CYC_COL[q]}">${Math.round(w[0])} K</button>`).join('')}
+    <button class="cyb${cyt.avg ? ' on' : ''}" data-z="avg" style="--c:#a78bfa">Ø</button></div>`;
+}
+document.addEventListener('click', e => { const b = e.target.closest('.cyb'); if (!b) return;
+  cyt[b.dataset.z] = !cyt[b.dataset.z]; store('cyt', JSON.stringify(cyt)); show(true); });
 // Score-Kurve dreifarbig: grün oberhalb, rot unterhalb der einstellbaren Grenzen, dazwischen grau
 function triScore(chart, data, o){
   const base = {priceScaleId: o.scale || 'right', priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
@@ -2389,11 +2717,12 @@ function draw(T, ind){
   const wrap = $('cwrap');
   const list = [{kind: 'price'}];
   if (hasZ) list.push({kind: 'score'});
-  if (ind && ind.v) panes.forEach(name => { if (ind.v[name]) list.push({kind: 'ind', name}); });
+  if (ind && ind.v) activePanes().forEach(name => { if (ind.v[name]) list.push({kind: 'ind', name}); });
   const H = heights(list.length - 1 - (hasZ ? 1 : 0), hasZ);
+  if (focus) { H.pane = Math.max(H.pane, desktop() ? 260 : landscape() ? H.pane : 210); if (!landscape()) H.price = Math.min(H.price, 260); }
   wrap.innerHTML = list.map((p, i) => {
     const h = (p.kind === 'price' ? H.price : p.kind === 'score' ? H.score : H.pane) + (i === list.length - 1 ? AXH() : 0);
-    const lab = p.kind === 'ind' ? `<div class="plab" id="plab${i}">${esc(p.name)}</div>` : p.kind === 'score' ? `<div class="plab" id="plab${i}"></div>` : '';
+    const lab = p.kind === 'ind' ? `<div class="plab" id="plab${i}">${esc(p.name)}</div>` + (p.name === 'Zyklen' && T.cyf ? cycBar() : '') : p.kind === 'score' ? `<div class="plab" id="plab${i}"></div>` : '';
     const bot = i === list.length - 1 ? AXH() : 0;
     return `<div class="cw" style="height:${h}px"><div class="ch" id="ch${i}" style="height:${h}px"></div>${lab}
       ${p.kind === 'price' ? '<div class="layer" id="ml"></div>' : ''}
@@ -2451,8 +2780,8 @@ function draw(T, ind){
     } else {
       const src = ind.v[p.name];
       vals = T.c.map((k, j) => { const q = j - pre; return q >= 0 && q < src.length ? src[q] : null; });
-      const ssrc = ind.s && ind.s[p.name];
-      if (ssrc) {   // dazugehörige Score-Kurve (0–100) im Hintergrund, eigene unsichtbare Skala
+      const ssrc = ind.s && ind.s[p.name], isCyc = p.name === 'Zyklen' && T.cyf;
+      if (ssrc && !isCyc) {   // dazugehörige Score-Kurve (0–100) im Hintergrund, eigene unsichtbare Skala
         svals = T.c.map((k, j) => { const q = j - pre; return q >= 0 && q < ssrc.length ? ssrc[q] : null; });
         triScore(chart, T.c.map((k, j) => svals[j] == null ? {time: k[0]} : {time: k[0], value: svals[j]}), {scale: 'sub', w: 1, a: 0.25, grey: '#4b5563'});
         chart.priceScale('sub').applyOptions({visible: false, scaleMargins: {top: 0.06, bottom: 0.06}});
@@ -2461,11 +2790,11 @@ function draw(T, ind){
       if (fit) {   // glatte Sinuskurven der aktuellen Zyklus-Anpassung (für die Vergangenheit im Nachhinein gerechnet)
         const sine = (j, w) => { const tt = j - pre - fit.i0, a = 2 * Math.PI * tt / w[0]; return (w[1] * Math.sin(a) + w[2] * Math.cos(a)) / fit.norm; };
         const tl = timesX.map((t, j) => ({t, j}));
-        fit.w.forEach((w, q) => { const ls = chart.addLineSeries({color: ['#38bdf8', '#f472b6', '#facc15'][q] + '99', lineWidth: 1,
+        fit.w.forEach((w, q) => { const ls = chart.addLineSeries({color: CYC_COL[q], lineWidth: 2, visible: !!cyt['z' + q],
             priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false});
           ls.setData(tl.map(({t, j}) => ({time: t, value: sine(j, w)}))); });
         vals = timesX.map((t, j) => fit.w.reduce((a, w) => a + sine(j, w), 0)).slice(0, n);
-        series = chart.addLineSeries({color: '#a78bfa', lineWidth: 2.5, priceLineVisible: false, lastValueVisible: true,
+        series = chart.addLineSeries({color: '#a78bfa', lineWidth: 2.5, priceLineVisible: false, lastValueVisible: !!cyt.avg, visible: !!cyt.avg,
           priceFormat: {type: 'custom', formatter: v => num(v), minMove: 0.0001}});
         series.setData(tl.map(({t, j}) => ({time: t, value: fit.w.reduce((a, w) => a + sine(j, w), 0)})));
       } else {
@@ -2703,8 +3032,8 @@ window.addEventListener('resize', () => { clearTimeout(rsT); rsT = setTimeout(()
 document.querySelectorAll('.mseg button').forEach(b => b.classList.toggle('on', b.dataset.m === mode));
 setLtf(ltf === 'g' || D.ltfs.includes(ltf) ? ltf : 'g');
 explain();
-const h0 = decodeURIComponent(location.hash.slice(1));
-if (h0) openCoin(h0); else if (desktop() && D.coins.length) openCoin(D.coins[0].s);
+const h0 = parseHash();
+if (h0.sym) openCoin(h0.sym, h0.kind ? {kind: h0.kind, name: h0.name} : null); else if (desktop() && D.coins.length) openCoin(D.coins[0].s);
 })();
 </script>
 </body>
