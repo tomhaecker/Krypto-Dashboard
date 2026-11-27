@@ -656,6 +656,9 @@ def cycles(c, win=400, top=3):
             val += a[p] * np.sin(w) + b[p] * np.cos(w)
         out[jj] = np.clip(val / max(amp[peaks].sum(), 1e-9), -1, 1)
         last_per = [[int(P[p]), round(float(amp[p] * 100), 1)] for p in peaks]
+        # Parameter der letzten Anpassung, damit die Seite die Sinuskurven glatt zeichnen und fortschreiben kann
+        last_per.append({"i0": int(i - W + 1), "w": [[float(P[p]), float(a[p]), float(b[p])] for p in peaks],
+                         "norm": float(max(amp[peaks].sum(), 1e-9))})
     return out, last_per
 
 
@@ -1368,7 +1371,11 @@ def run(coins_loader=load_coins, macro_loader=load_macro, html=None):
                         continue
                     details.append([name, GROUP_OF.get(name, "Markt"), round(sv),
                                     "–" if np.isnan(rv) else v[2](rv), "–" if np.isnan(rv) else v[3](rv)])
-                extra["cyp"] = C["cyc_per"]
+                cp = C["cyc_per"]
+                extra["cyp"] = [x for x in cp if isinstance(x, list)]
+                fit = [x for x in cp if isinstance(x, dict)]
+                if fit:
+                    extra["cyf"] = fit[0]
                 pane, psub = {}, {}
                 for name, v in C["ind"].items():
                     series = v[4] if len(v) > 4 else v[1]
@@ -1628,6 +1635,15 @@ li.row.sel{outline:2px solid var(--acc)}
 #all .gh{color:var(--txt);font-weight:700;padding-top:12px}
 #all .gh span{float:right;color:var(--mut);font-weight:600;font-size:11.5px}
 .gtag{font-size:9.5px;color:var(--mut);border:1px solid var(--line);border-radius:5px;padding:0 4px;margin-left:3px}
+.trg{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.trc{display:flex;flex-direction:column;gap:6px;background:var(--card2);border-radius:12px;padding:10px}
+.trc label{display:flex;flex-direction:column;font-size:11.5px;color:var(--mut);gap:3px}
+.trc label.chk{flex-direction:row;align-items:center;gap:6px}
+.trc input,.trc select,.trg3 input{background:var(--card);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:6px 7px;font-size:14px;font-family:inherit;min-width:0}
+.trc .r2{display:flex;gap:4px}.trc .r2 input{width:70px;flex:none}.trc .r2 select{flex:1;font-size:12px}
+.trg3{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px;font-size:12.5px;color:var(--mut)}
+.trg3 input{width:60px}.trg3 .mut{opacity:.7}
+@media (max-width:420px){.trg{gap:6px}.trc{padding:8px;gap:5px}.trc label{font-size:10.5px}.trc .r2{flex-wrap:wrap}.trc .r2 input{width:100%}.trc input,.trc select{padding:5px 6px;font-size:13px}}
 </style>
 </head>
 <body>
@@ -1674,7 +1690,6 @@ li.row.sel{outline:2px solid var(--acc)}
       <button class="chip sm" id="tgPiv">Hochs/Tiefs</button>
       <span class="thr" id="thrw"><input type="range" id="thr" min="3" max="80" step="1"><b id="thrv"></b></span>
       <button class="chip sm" id="tgCyc" style="--c:#eab308">₿-Zyklus <span style="color:#eab308">▲</span><span style="color:#22d3ee">▼</span></button>
-      <span class="lbl">Tranchen:</span><span class="trs"><b class="up">Kauf</b><select id="nB"></select><b class="dn">Verk.</b><select id="nS"></select></span>
       <div class="seg cseg"><button data-c="USD">$</button><button data-c="EUR">€</button></div>
       <span id="mas"></span>
       <span class="lbl" style="margin-left:4px">Score:</span><div class="seg" id="zseg"><button data-z="tf">Zeitrahmen</button><button data-z="g">Gesamt</button></div>
@@ -1682,6 +1697,28 @@ li.row.sel{outline:2px solid var(--acc)}
     <div class="mres" id="mres"></div>
     <div class="cwrap" id="cwrap"></div>
     <div class="msg" id="noz" style="display:none">Für diesen Zeitrahmen gibt es zu wenige Kerzen für einen eigenen Score – schalte auf „Gesamt“.</div>
+  </div>
+  <div class="sec" id="trbox"><h4>Signale &amp; Tranchen</h4>
+    <div class="trg">
+      <div class="trc"><b class="up">▲ Kauf</b>
+        <label>Anzahl Tranchen<input type="number" id="bN" min="1" max="20" step="1"></label>
+        <label>Erste Stufe: Score ≥<input type="number" id="bStart" min="50" max="100" step="0.5"></label>
+        <label>Abstand je Tranche<input type="number" id="bStep" min="0" max="20" step="0.5"></label>
+        <label>Neue Runde, wenn Score ≤<input type="number" id="bRe" min="0" max="99" step="1"></label>
+        <label>Volumen je Tranche<span class="r2"><input type="number" id="bSize" min="0" step="1"><select id="bMode"><option value="pct">% vom Startkapital</option><option value="abs">Betrag</option></select></span></label>
+      </div>
+      <div class="trc"><b class="dn">▼ Verkauf</b>
+        <label>Anzahl Tranchen<input type="number" id="sN" min="1" max="20" step="1"></label>
+        <label>Erste Stufe: Score ≤<input type="number" id="sStart" min="0" max="50" step="0.5"></label>
+        <label>Abstand je Tranche<input type="number" id="sStep" min="0" max="20" step="0.5"></label>
+        <label>Neue Runde, wenn Score ≥<input type="number" id="sRe" min="1" max="100" step="1"></label>
+        <label>Volumen je Tranche<span class="r2"><input type="number" id="sSize" min="0" step="1"><select id="sMode"><option value="pct">% der Position</option><option value="abs">Betrag</option></select></span></label>
+        <label class="chk"><input type="checkbox" id="sAll"> letzte Tranche verkauft alles</label>
+      </div>
+    </div>
+    <div class="trg3">Farbe der Score-Kurve: <span class="up">grün ab</span><input type="number" id="gUp" min="50" max="100" step="1">
+      <span class="dn">rot unter</span><input type="number" id="gDn" min="0" max="50" step="1"><span class="mut">dazwischen grau</span></div>
+    <p class="note" id="trnote" style="margin:8px 0 0"></p>
   </div>
   <div class="sec" id="simbox"><h4>Simulation (Backtest) mit diesen Signalen</h4>
     <div class="simf">
@@ -1732,9 +1769,12 @@ const store = (k, v) => { try { if (v === undefined) return localStorage.getItem
 let filter = 'all', query = '', ltf = store('ltf2') || 'g', ctf = store('ctf') || '4h', sortBy = store('sort') || 'mc';
 let mode = store('mode') === 'long' ? 'long' : 'short';
 let ccy = store('ccy') === 'EUR' ? 'EUR' : 'USD';
-let nB = Math.min(5, Math.max(1, +(store('nB') || 1))), nS = Math.min(5, Math.max(1, +(store('nS') || 3)));
-const buyLv = () => Array.from({length: nB}, (_, k) => 80 + k * (nB > 1 ? Math.min(5, 15 / (nB - 1)) : 0));
-const sellLv = () => Array.from({length: nS}, (_, k) => 30 - k * (nS > 1 ? Math.min(10, 25 / (nS - 1)) : 0));
+const TRDEF = {bN: 1, bStart: 80, bStep: 5, bRe: 50, bSize: 100, bMode: 'pct',
+               sN: 3, sStart: 30, sStep: 10, sRe: 50, sSize: 33.3, sMode: 'pct', sAll: true, gUp: 70, gDn: 30};
+let TR = Object.assign({}, TRDEF); try { Object.assign(TR, JSON.parse(store('tr2') || '{}')); } catch (e) {}
+const buyLv = () => { const out = []; for (let k = 0; k < TR.bN; k++) { const v = TR.bStart + k * TR.bStep; if (v <= 100 && !out.includes(v)) out.push(v); } return out; };
+const sellLv = () => { const out = []; for (let k = 0; k < TR.sN; k++) { const v = TR.sStart - k * TR.sStep; if (v >= 0 && !out.includes(v)) out.push(v); } return out; };
+let nB = 1, nS = 1;   // tatsächliche Anzahl Stufen (nach Grenzen)
 const FX = D.fx || [];
 function fxAt(t){ if (!FX.length) return null; const d = Math.floor(t / 86400); let lo = 0, hi = FX.length - 1;
   if (d <= FX[0][0]) return FX[0][1]; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (FX[m][0] <= d) lo = m; else hi = m - 1; } return FX[lo][1]; }
@@ -1808,9 +1848,22 @@ function setCcy(c){
 }
 document.querySelectorAll('.cseg').forEach(s => s.addEventListener('click', e => { const b = e.target.closest('button'); if (b) setCcy(b.dataset.c); }));
 document.querySelectorAll('.cseg button').forEach(b => b.classList.toggle('on', b.dataset.c === ccy));
-['nB', 'nS'].forEach(id => { $(id).innerHTML = [1, 2, 3, 4, 5].map(k => `<option value="${k}">${k}</option>`).join('');
-  $(id).value = id === 'nB' ? nB : nS;
-  $(id).addEventListener('change', () => { if (id === 'nB') nB = +$(id).value; else nS = +$(id).value; store(id, $(id).value); explain(); if (cur && cur.data) show(true); }); });
+function trSync(){
+  nB = buyLv().length; nS = sellLv().length;
+  const f = v => String(+(+v).toFixed(2)).replace('.', ',');
+  $('trnote').innerHTML = `Kauf-Stufen: ${buyLv().map(v => '≥ ' + f(v)).join(' · ')} – je ${TR.bMode === 'pct' ? f(TR.bSize) + ' % vom Startkapital' : money(TR.bSize)}.
+    Verkauf-Stufen: ${sellLv().map(v => '≤ ' + f(v)).join(' · ')} – je ${TR.sMode === 'pct' ? f(TR.sSize) + ' % der Position' : money(TR.sSize)}${TR.sAll ? ', letzte Stufe verkauft alles' : ''}.
+    Jede Stufe löst einmal pro Runde aus; sie ist wieder scharf, sobald der Score die Grenze für eine neue Runde erreicht.
+    Für häufigeres Nachkaufen die Grenze näher an die Stufen setzen (z. B. 70 statt 50).`;
+}
+['bN', 'bStart', 'bStep', 'bRe', 'bSize', 'bMode', 'sN', 'sStart', 'sStep', 'sRe', 'sSize', 'sMode', 'sAll', 'gUp', 'gDn'].forEach(id => {
+  const el = $(id); if (el.type === 'checkbox') el.checked = !!TR[id]; else el.value = TR[id];
+  el.addEventListener('change', () => {
+    TR[id] = el.type === 'checkbox' ? el.checked : el.tagName === 'SELECT' ? el.value : (+el.value || 0);
+    if (id === 'bN' || id === 'sN') TR[id] = Math.max(1, Math.min(20, Math.round(TR[id])));
+    store('tr2', JSON.stringify(TR)); trSync(); explain(); if (cur && cur.data) show(true); });
+});
+trSync();
 
 // ---------------- Modus
 function setMode(m){
@@ -1915,9 +1968,9 @@ function explain(){
   <p><b>Gesamt-Score:</b> unabhängig vom gewählten Chart. ${mode === 'long' ? '1 T (30 %), 1 W (45 %), 1 M (25 %)' : '1 Std (25 %), 4 Std (40 %), 1 T (35 %)'} –
   jeweils nur die zuletzt abgeschlossene Kerze, damit sich nichts nachträglich ändert. Weil das Mitteln den Wert Richtung 50 drückt, wird er wieder auf die übliche Schwankungsbreite gespreizt (Faktor ${String((D.overall_k || {})[mode] ?? 1).slice(0, 4).replace('.', ',')}). Im Score-Fenster kannst du zwischen
   „Zeitrahmen“ und „Gesamt“ wechseln; die Pfeile im Chart folgen dem angezeigten Score.</p>
-  <p><b>Signale (einstellbar):</b> Kauf in ${nB} Tranche${nB > 1 ? 'n' : ''} bei Score ${buyLv().map(v => '≥ ' + String(+v.toFixed(1)).replace('.', ',')).join(', ')},
-  Verkauf in ${nS} Tranche${nS > 1 ? 'n' : ''} bei ${sellLv().map(v => '≤ ' + String(+v.toFixed(1)).replace('.', ',')).join(', ')}. Jede Stufe zählt einmal
-  je Runde; eine neue Runde beginnt erst, wenn der Score wieder ${D.reset} erreicht. Grün = kaufen, rot = verkaufen.</p>${calTxt}${evTxt}
+  <p><b>Signale (einstellbar unter „Signale &amp; Tranchen“):</b> Kauf in ${buyLv().length} Tranche${buyLv().length > 1 ? 'n' : ''} bei Score ${buyLv().map(v => '≥ ' + String(+v.toFixed(1)).replace('.', ',')).join(', ')},
+  Verkauf in ${sellLv().length} Tranche${sellLv().length > 1 ? 'n' : ''} bei ${sellLv().map(v => '≤ ' + String(+v.toFixed(1)).replace('.', ',')).join(', ')}. Jede Stufe zählt einmal
+  je Runde; eine neue Kauf-Runde beginnt, wenn der Score wieder auf ${TR.bRe} fällt, eine neue Verkaufs-Runde ab ${TR.sRe}. Grün = kaufen, rot = verkaufen.</p>${calTxt}${evTxt}
   <p><b>Ehrlichkeit:</b> Jede Kerze nutzt nur Daten bis zu dieser Kerze – alte Signale ändern sich nicht. Die gestrichelten
   Hoch/Tief-Linien (Kursumkehr um mindestens die eingestellte Schwelle) und die ₿-Zyklus-Linien (Hoch gold, Tief türkis) (höchstes und tiefstes
   Bitcoin-Niveau je Halving-Zyklus, fest hinterlegt) stehen erst im Nachhinein fest und zeigen nur, wie gut der Score getroffen hätte. Kein Indikator kann
@@ -2056,7 +2109,7 @@ function signalsJS(z, from){
   const out = [], f0 = from || 0;
   const run = (lv, up, code) => { let armed = true;
     for (let i = f0; i < z.length; i++) { const v = z[i]; if (v == null) continue; const p = i > f0 ? (z[i - 1] ?? 50) : 50;
-      if (up ? v <= D.reset : v >= D.reset) armed = true;
+      if (up ? v <= TR.bRe : v >= TR.sRe) armed = true;
       if (armed && (up ? v >= lv && p < lv : v <= lv && p > lv)) { out.push([i, code]); armed = false; } } };
   buyLv().forEach((lv, k) => run(lv, true, 'B' + (k + 1)));
   sellLv().forEach((lv, k) => run(lv, false, 'S' + (k + 1)));
@@ -2123,15 +2176,16 @@ function simulate(){
     while (si < sig.length && sig[si][0] === i) {
       const code = sig[si][1], k = +code.slice(1); si++;
       if (code[0] === 'B') {
-        if (k === 1 || !buyPlan) buyPlan = cash / nB;
-        const amt = Math.min(buyPlan, cash); if (amt < 1) continue;
+        const want = TR.bMode === 'pct' ? P.budget * TR.bSize / 100 : TR.bSize;
+        const amt = Math.min(want, cash); if (amt < 1) continue;
         const f = amt * fee, inv = amt - f; fees += f; cash -= amt;
         lots.push({t, entry: px, units: inv * L / px, margin: inv, cost: amt, lev: L});
         rows.push([t, `Kauf ${nB > 1 ? k + '/' + nB : ''}`, px, amt, null, '']);
       } else {
         const total = lots.reduce((a, lt) => a + lt.units, 0); if (total <= 0) continue;
-        if (k === 1 || !sellPlan) sellPlan = total / nS;
-        let need = k === nS ? total : Math.min(sellPlan, total);
+        let need = TR.sMode === 'pct' ? total * TR.sSize / 100 : TR.sSize / px;
+        if (TR.sAll && k === nS) need = total;
+        need = Math.min(need, total);
         while (need > 1e-12 && lots.length) {
           const lt = lots[0], u = Math.min(lt.units, need), fr = u / lt.units;
           const val = lotValue(lt, px, t) * fr, f = u * px * fee, net = Math.max(0, val - f), basis = lt.cost * fr;
@@ -2170,7 +2224,7 @@ function simulate(){
   const prodTxt = {spot: `Spot: Gewinne nach über 1 Jahr Haltedauer steuerfrei, sonst ${String(P.taxP).replace('.', ',')} % (Freigrenze ${P.freeP} € pro Jahr), Verkauf nach First in, First out.`,
     etp: `ETP: Abgeltungsteuer ${String(P.taxC).replace('.', ',')} % auf Gewinne über ${P.freeC} € pro Jahr, keine Haltefrist.`,
     fut: `Futures mit Hebel ${L}×: Abgeltungsteuer ${String(P.taxC).replace('.', ',')} % über ${P.freeC} €, Finanzierung ${String(P.fund).replace('.', ',')} % p. a. auf den Hebelbetrag, Liquidation bei Totalverlust der Position. Verlustverrechnung vereinfacht.`};
-  $('simnote').innerHTML = `${prodTxt[P.prod]} Ausführung zum Schlusskurs der Signal-Kerze, ${nB} Kauf- und ${nS} Verkaufs-Tranche${nS > 1 ? 'n' : ''}.
+  $('simnote').innerHTML = `${prodTxt[P.prod]} Ausführung zum Schlusskurs der Signal-Kerze; Tranchen und Volumen wie unter „Signale &amp; Tranchen“ eingestellt.
     Steuern nur grob geschätzt – keine Steuerberatung. Die Einstellungen des Scores wurden mit Wissen über die Vergangenheit kalibriert, daher wirkt der Backtest eher zu gut.`;
   const show_ = rows.slice().reverse().slice(0, 300);
   $('trades').innerHTML = show_.length ? `<tr><th>Datum</th><th>Aktion</th><th>Preis</th><th>Betrag</th><th>Ergebnis</th></tr>` + show_.map(r =>
@@ -2301,6 +2355,22 @@ function indTable(T){
 }
 
 // ---------------- Charts: Kurs, Score und gewählte Indikatoren untereinander
+// Score-Kurve dreifarbig: grün oberhalb, rot unterhalb der einstellbaren Grenzen, dazwischen grau
+function triScore(chart, data, o){
+  const base = {priceScaleId: o.scale || 'right', priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    autoscaleInfoProvider: () => ({priceRange: {minValue: 0, maxValue: 100}})};
+  const none = 'rgba(0,0,0,0)';
+  const grey = chart.addLineSeries(Object.assign({}, base, {color: o.grey || '#6b7280', lineWidth: o.w,
+    lastValueVisible: !!o.last, crosshairMarkerVisible: !!o.last, priceFormat: {type: 'price', precision: 0, minMove: 1}}));
+  const green = chart.addBaselineSeries(Object.assign({}, base, {baseValue: {type: 'price', price: TR.gUp}, lineWidth: o.w,
+    topLineColor: '#22c55e', topFillColor1: `rgba(34,197,94,${o.a})`, topFillColor2: 'rgba(34,197,94,.03)',
+    bottomLineColor: none, bottomFillColor1: none, bottomFillColor2: none}));
+  const red = chart.addBaselineSeries(Object.assign({}, base, {baseValue: {type: 'price', price: TR.gDn}, lineWidth: o.w,
+    topLineColor: none, topFillColor1: none, topFillColor2: none,
+    bottomLineColor: '#ef4444', bottomFillColor1: 'rgba(239,68,68,.03)', bottomFillColor2: `rgba(239,68,68,${o.a})`}));
+  [grey, green, red].forEach(sr => sr.setData(data));
+  return grey;
+}
 function heights(k, hasZ){
   if (desktop()) {
     const zh = hasZ ? 170 : 0, ph = 120;
@@ -2348,6 +2418,10 @@ function draw(T, ind){
     localization: {locale: 'de-DE', timeFormatter: t => fmtDate(t)},
   });
   const n = T.c.length, lastP = T.c[n - 1][4];
+  // Zyklen nach vorne fortschreiben: alle Fenster bekommen leere Zukunfts-Zeitpunkte, damit sie gleich bleiben
+  const futN = list.some(p => p.name === 'Zyklen') && T.cyf ? Math.min(200, Math.round(Math.max(...T.cyf.w.map(w => w[0])) * 0.6)) : 0;
+  const timesX = T.c.map(k => k[0]); for (let q = 1; q <= futN; q++) timesX.push(T.c[n - 1][0] + q * SEC[ctf]);
+  const fut = timesX.slice(n).map(t => ({time: t}));
   const prec = lastP >= 1000 ? 2 : lastP >= 1 ? 3 : lastP >= 0.01 ? 5 : 8;
   const charts = [];
   list.forEach((p, i) => {
@@ -2356,7 +2430,7 @@ function draw(T, ind){
     if (p.kind === 'price') {
       series = chart.addCandlestickSeries({upColor: '#22c55e', downColor: '#ef4444', borderVisible: false,
         wickUpColor: '#22c55e', wickDownColor: '#ef4444', priceFormat: {type: 'price', precision: prec, minMove: Math.pow(10, -prec)}});
-      series.setData(T.c.map(k => ({time: k[0], open: k[1], high: k[2], low: k[3], close: k[4]})));
+      series.setData(T.c.map(k => ({time: k[0], open: k[1], high: k[2], low: k[3], close: k[4]})).concat(fut));
       const sg = hasZ ? signalsJS(Z) : [], mk = [];
       sg.forEach(([j, code]) => { if (j < 0 || j >= n) return;
         const buy = code[0] === 'B', k = +code.slice(1), N = buy ? nB : nS, pr = price(T.c[j][4]);
@@ -2371,12 +2445,7 @@ function draw(T, ind){
         ls.setData(T.c.map((c, j) => v[j] == null ? {time: c[0]} : {time: c[0], value: v[j]})); });
     } else if (p.kind === 'score') {
       vals = Z;
-      series = chart.addBaselineSeries({baseValue: {type: 'price', price: 50}, lineWidth: 2,
-        topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,.28)', topFillColor2: 'rgba(34,197,94,.02)',
-        bottomLineColor: '#ef4444', bottomFillColor1: 'rgba(239,68,68,.02)', bottomFillColor2: 'rgba(239,68,68,.28)',
-        priceFormat: {type: 'price', precision: 0, minMove: 1}, lastValueVisible: true, priceLineVisible: false,
-        autoscaleInfoProvider: () => ({priceRange: {minValue: 0, maxValue: 100}})});
-      series.setData(T.c.map((k, j) => Z[j] == null ? {time: k[0]} : {time: k[0], value: Z[j]}));
+      series = triScore(chart, T.c.map((k, j) => Z[j] == null ? {time: k[0]} : {time: k[0], value: Z[j]}).concat(fut), {w: 2, a: 0.32, last: true});
       buyLv().forEach((lv, q) => series.createPriceLine({price: lv, color: '#22c55e', lineWidth: 1, lineStyle: 2, axisLabelVisible: q === 0, title: q === 0 ? 'Kauf' : ''}));
       sellLv().forEach((lv, q) => series.createPriceLine({price: lv, color: '#ef4444', lineWidth: 1, lineStyle: 2, axisLabelVisible: q === 0, title: q === 0 ? 'Verk.' : ''}));
     } else {
@@ -2385,23 +2454,31 @@ function draw(T, ind){
       const ssrc = ind.s && ind.s[p.name];
       if (ssrc) {   // dazugehörige Score-Kurve (0–100) im Hintergrund, eigene unsichtbare Skala
         svals = T.c.map((k, j) => { const q = j - pre; return q >= 0 && q < ssrc.length ? ssrc[q] : null; });
-        const ss = chart.addBaselineSeries({priceScaleId: 'sub', baseValue: {type: 'price', price: 50}, lineWidth: 1,
-          topLineColor: 'rgba(34,197,94,.9)', topFillColor1: 'rgba(34,197,94,.22)', topFillColor2: 'rgba(34,197,94,.02)',
-          bottomLineColor: 'rgba(239,68,68,.9)', bottomFillColor1: 'rgba(239,68,68,.02)', bottomFillColor2: 'rgba(239,68,68,.22)',
-          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-          autoscaleInfoProvider: () => ({priceRange: {minValue: 0, maxValue: 100}})});
+        triScore(chart, T.c.map((k, j) => svals[j] == null ? {time: k[0]} : {time: k[0], value: svals[j]}), {scale: 'sub', w: 1, a: 0.25, grey: '#4b5563'});
         chart.priceScale('sub').applyOptions({visible: false, scaleMargins: {top: 0.06, bottom: 0.06}});
-        ss.setData(T.c.map((k, j) => svals[j] == null ? {time: k[0]} : {time: k[0], value: svals[j]}));
       }
-      series = chart.addLineSeries({color: '#a78bfa', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true,
-        priceFormat: {type: 'custom', formatter: v => num(v), minMove: 0.0001}});
-      series.setData(T.c.map((k, j) => vals[j] == null ? {time: k[0]} : {time: k[0], value: vals[j]}));
+      const fit = p.name === 'Zyklen' && T.cyf;
+      if (fit) {   // glatte Sinuskurven der aktuellen Zyklus-Anpassung (für die Vergangenheit im Nachhinein gerechnet)
+        const sine = (j, w) => { const tt = j - pre - fit.i0, a = 2 * Math.PI * tt / w[0]; return (w[1] * Math.sin(a) + w[2] * Math.cos(a)) / fit.norm; };
+        const tl = timesX.map((t, j) => ({t, j}));
+        fit.w.forEach((w, q) => { const ls = chart.addLineSeries({color: ['#38bdf8', '#f472b6', '#facc15'][q] + '99', lineWidth: 1,
+            priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false});
+          ls.setData(tl.map(({t, j}) => ({time: t, value: sine(j, w)}))); });
+        vals = timesX.map((t, j) => fit.w.reduce((a, w) => a + sine(j, w), 0)).slice(0, n);
+        series = chart.addLineSeries({color: '#a78bfa', lineWidth: 2.5, priceLineVisible: false, lastValueVisible: true,
+          priceFormat: {type: 'custom', formatter: v => num(v), minMove: 0.0001}});
+        series.setData(tl.map(({t, j}) => ({time: t, value: fit.w.reduce((a, w) => a + sine(j, w), 0)})));
+      } else {
+        series = chart.addLineSeries({color: '#a78bfa', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true,
+          priceFormat: {type: 'custom', formatter: v => num(v), minMove: 0.0001}});
+        series.setData(T.c.map((k, j) => vals[j] == null ? {time: k[0]} : {time: k[0], value: vals[j]}).concat(fut));
+      }
       (REF[p.name] || []).forEach(v => series.createPriceLine({price: v, color: '#4b5563', lineWidth: 1, lineStyle: 2, axisLabelVisible: false}));
     }
     charts.push({kind: p.kind, name: p.name, chart, series, vals, svals, i});
   });
-  G = {T, n, charts, pc: charts[0].chart, cs: charts[0].series};
-  if (!view) view = {bars: Math.min(n, big() ? 150 : 120), to: n - 1 + 4};
+  G = {T, n, nf: n + futN, charts, pc: charts[0].chart, cs: charts[0].series};
+  if (!view) view = {bars: Math.min(n, big() ? 150 : 120), to: n - 1 + (futN ? Math.min(futN, 40) : 4)};
   bindTouch(); clampView(); applyView();
   // alle Preisachsen gleich breit, damit die Linien exakt übereinander liegen
   requestAnimationFrame(() => {
@@ -2429,14 +2506,14 @@ function labels(i){
 
 // ---------------- Ansicht: Schieben und Zoomen auf der Zeitachse
 const MINB = 10;
-const maxBars = () => Math.max(MINB + 1, G.n + 8);
+const maxBars = () => Math.max(MINB + 1, (G.nf || G.n) + 8);
 function plotWidth(){
   let w = 78; try { w = G.pc.priceScale('right').width(); } catch (e) {}
   return Math.max(50, $('cwrap').clientWidth - w);
 }
 function clampView(){
   view.bars = Math.max(MINB, Math.min(maxBars(), view.bars));
-  view.to = Math.min(G.n - 1 + 8, Math.max(Math.min(view.bars - 1, G.n + 7), view.to));
+  view.to = Math.min((G.nf || G.n) - 1 + 8, Math.max(Math.min(view.bars - 1, G.n + 7), view.to));
 }
 function applyView(){
   if (!G) return;
