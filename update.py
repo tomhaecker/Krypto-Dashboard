@@ -1369,15 +1369,16 @@ def run(coins_loader=load_coins, macro_loader=load_macro, html=None):
                     details.append([name, GROUP_OF.get(name, "Markt"), round(sv),
                                     "–" if np.isnan(rv) else v[2](rv), "–" if np.isnan(rv) else v[3](rv)])
                 extra["cyp"] = C["cyc_per"]
-                pane = {}
+                pane, psub = {}, {}
                 for name, v in C["ind"].items():
                     series = v[4] if len(v) > 4 else v[1]
                     pane[name] = [r3(x) for x in np.asarray(series, dtype=float)]
+                    psub[name] = [None if not np.isfinite(x) else int(round(x)) for x in np.asarray(v[0], dtype=float)]
                 for g, k in (("Score-Teil Lage", "lage"), ("Score-Teil Wende", "wende"), ("Score-Teil Markt", "markt"),
                              ("Score-Teil Zyklus", "zyklus")):
                     pane[g] = [r3(x) for x in gm["short"][tf][k]]
                 with open(os.path.join(OUT_DIR, "data", "ind", f"{safe_name(meta['sym'])}_{tf}.json"), "w") as f:
-                    json.dump({"t0": int(df["t"].iloc[0]), "v": pane}, f, separators=(",", ":"))
+                    json.dump({"t0": int(df["t"].iloc[0]), "v": pane, "s": psub}, f, separators=(",", ":"))
                 extra["ind"] = 1
             ct = close_times(df["t"].values)
             overall = {mode: overall_at(ct, mode, scores[mode]) for mode in MODES}
@@ -1622,6 +1623,11 @@ li.row.sel{outline:2px solid var(--acc)}
 #trades td{font-size:12px;padding:6px 4px;vertical-align:top}
 #trades small{color:var(--mut);font-size:10.5px}
 .evt td{font-size:11.5px;padding:3px 4px}
+#all .ih th{font-size:11px;color:var(--mut);font-weight:600;padding:4px;text-align:left;border-bottom:1px solid var(--line)}
+#all .ih th.v{text-align:right}
+#all .gh{color:var(--txt);font-weight:700;padding-top:12px}
+#all .gh span{float:right;color:var(--mut);font-weight:600;font-size:11.5px}
+.gtag{font-size:9.5px;color:var(--mut);border:1px solid var(--line);border-radius:5px;padding:0 4px;margin-left:3px}
 </style>
 </head>
 <body>
@@ -1697,11 +1703,10 @@ li.row.sel{outline:2px solid var(--acc)}
   <div class="sec" id="statbox"><h4>Bilanz der Signale (gesamte Historie, Standard-Tranchen)</h4><div class="grid2" id="stat"></div><div class="grid4" id="stat2"></div></div>
   <div class="sec" id="fbox"><h4>Filter &amp; Zyklen</h4><div class="grid2" id="filt"></div></div>
   <div class="sec" id="catbox"><h4>Bestandteile</h4><div class="grid3" id="cats"></div></div>
-  <div class="sec" id="pcbox"><div class="grid2">
-    <div><h4 class="up">Spricht für Kaufen</h4><div id="pro"></div></div>
-    <div><h4 class="dn">Spricht für Verkaufen</h4><div id="con"></div></div>
-  </div></div>
-  <div class="sec" id="allbox"><details><summary>Alle Indikatoren</summary><table id="all"></table></details></div>
+  <div class="sec" id="allbox"><details open><summary id="allsum">Alle Indikatoren</summary>
+    <div class="chips" id="isort" style="margin:8px 0 4px"><span class="lbl">Sortieren:</span>
+      <button class="chip sm" data-s="group">Gruppe</button><button class="chip sm" data-s="weight">Gewichtung</button><button class="chip sm" data-s="score">Score</button></div>
+    <table id="all"></table><p class="note" style="margin:6px 0 0" id="allnote"></p></details></div>
   <div class="sec exp"><details><summary>Wie entsteht der Score?</summary><div class="expc"></div></details></div>
   <p class="note">▲ Kauf = erster Eintritt in die Kaufzone je Runde. ▼ ⅓ / ⅔ / 3/3 = Verkauf in Tranchen bei Score 30 / 20 / 10.
   Der Score nutzt nur Daten bis zur jeweiligen Kerze. Senkrechte gestrichelte Linien = echte Hochs (rot) und Tiefs (grün),
@@ -1893,10 +1898,11 @@ function explain(){
   Blockchain.com (Tagesdurchschnittskurse ab 2010, ohne Hoch/Tief/Volumen), ältere Altcoins von Bitfinex – nur übernommen,
   wenn die Kurse im Überlappungszeitraum übereinstimmen.</p>
   <p>Jeder Indikator wird für jede Kerze in einen <b>Teil-Score von 0 bis 100</b> umgerechnet (100 = Kaufen, 0 = Verkaufen):</p>
-  <p><b>1. Lage</b> – Wie weit unten oder oben steht der Kurs?</p><ul>${grp('Lage').map(li).join('')}</ul>
-  <p><b>2. Markt</b> (${p(cfg.wm / (1 + cfg.wm))} der Richtung) – Stimmung und Umfeld:</p><ul>${grp('Markt').map(li).join('')}</ul>
-  <p><b>3. Wende</b> – Gibt es Zeichen, dass der Kurs dreht?</p><ul>${grp('Wende').map(li).join('')}</ul>
-  <p><b>4. Bitcoin-Zyklus</b> – langfristige Bewertung aus dem Bitcoin-Kurs (gilt für alle Coins, normales Gewicht):</p><ul>${grp('Zyklus').map(li).join('')}</ul>
+  <p><b>Insgesamt ${names.length} Indikatoren</b> in vier Gruppen.</p>
+  <p><b>1. Lage (${grp('Lage').length})</b> – Wie weit unten oder oben steht der Kurs?</p><ul>${grp('Lage').map(li).join('')}</ul>
+  <p><b>2. Markt (${grp('Markt').length})</b> (${p(cfg.wm / (1 + cfg.wm))} der Richtung) – Stimmung und Umfeld:</p><ul>${grp('Markt').map(li).join('')}</ul>
+  <p><b>3. Wende (${grp('Wende').length})</b> – Gibt es Zeichen, dass der Kurs dreht?</p><ul>${grp('Wende').map(li).join('')}</ul>
+  <p><b>4. Bitcoin-Zyklus (${grp('Zyklus').length})</b> – langfristige Bewertung aus dem Bitcoin-Kurs (gilt für alle Coins, normales Gewicht):</p><ul>${grp('Zyklus').map(li).join('')}</ul>
   <p><b>Gestaffelter Score:</b> Lage, Markt und Wende ergeben einen Ausschlag bis etwa 80 (bzw. 20) – das reicht für normale
   Zwischentiefs und -hochs. Nur wenn zusätzlich die Bitcoin-Zyklus-Gruppe in dieselbe Richtung zeigt, kommen bis zu 15 Punkte
   dazu: Werte über 90 (bzw. unter 10) gibt es nur an großen Wendepunkten. Zeigt die Zyklus-Gruppe in die Gegenrichtung,
@@ -2004,9 +2010,10 @@ function sheetList(){
   const names = Object.keys(D.info), grp = g => names.filter(k => D.go[k] === g);
   const box = k => `<label><input type="checkbox" value="${esc(k)}" ${panes.includes(k) ? 'checked' : ''}> ${esc(k)}</label>`;
   $('sheetl').innerHTML = `<p class="msg" style="text-align:left">Bis zu 4 Fenster. Jedes läuft synchron mit Chart, Zeitachse und Hoch/Tief-Linien.</p>` +
-    `<h4>Score-Bestandteile</h4>${['Score-Teil Lage', 'Score-Teil Wende', 'Score-Teil Markt', 'Score-Teil Zyklus'].map(box).join('')}` +
-    `<h4>Zyklen</h4>${box('Zyklen')}` +
-    ['Lage', 'Wende', 'Markt', 'Zyklus'].map(g => `<h4>${g === 'Zyklus' ? 'Bitcoin-Zyklus' : g}</h4>` + grp(g).filter(k => k !== 'Zyklen').map(box).join('')).join('');
+    `<h4>Score-Bestandteile (4)</h4>${['Score-Teil Lage', 'Score-Teil Wende', 'Score-Teil Markt', 'Score-Teil Zyklus'].map(box).join('')}` +
+    `<h4>Zyklen (1)</h4>${box('Zyklen')}` +
+    ['Lage', 'Wende', 'Markt', 'Zyklus'].map(g => { const l = grp(g).filter(k => k !== 'Zyklen');
+      return `<h4>${g === 'Zyklus' ? 'Bitcoin-Zyklus' : g} (${l.length})</h4>` + l.map(box).join(''); }).join('');
 }
 $('addp').addEventListener('click', () => { sheetList(); $('sheet').classList.add('open'); });
 $('sheetl').addEventListener('change', e => {
@@ -2231,7 +2238,7 @@ async function show(keep){
   const s = mode === 'long' ? cur.meta.gl : cur.meta.g, col = color(s);
   $('dsc').innerHTML = `<small style="display:block;font-size:9px;font-weight:600;opacity:.8">Gesamt</small>${s == null ? '–' : Math.round(s)}`;
   $('dsc').style.color = col; $('dsc').style.background = col + '22';
-  ['fbox', 'catbox', 'pcbox', 'allbox', 'statbox'].forEach(id => $(id).style.display = ownZ && T.b ? '' : 'none');
+  ['fbox', 'catbox', 'allbox', 'statbox'].forEach(id => $(id).style.display = ownZ && T.b ? '' : 'none');
   $('noz').style.display = hasZ ? 'none' : '';
   syncOpts();
   if (ownZ && T.b) details(T);
@@ -2260,14 +2267,37 @@ function details(T){
     const v = k[g]; if (v == null) return `<div class="cat">${g}<b>–</b></div>`;
     return `<div class="cat">${g}<b style="color:${color(v)}">${v}</b><div class="bar"><i style="width:${v}%;background:${color(v)}"></i></div></div>`;
   }).join('');
-  const sorted = [...T.b].sort((a, b) => b[2] - a[2]);
-  const item = x => `<div class="it"><b><span style="color:var(--txt)">${esc(x[0])}</span><span style="color:${color(x[2])}">${x[2]}</span></b><span>${esc(x[4])}</span></div>`;
-  const pro = sorted.filter(x => x[2] >= 60).slice(0, 4), con = sorted.filter(x => x[2] <= 40).reverse().slice(0, 4);
-  $('pro').innerHTML = pro.length ? pro.map(item).join('') : '<div class="it"><span>Keine deutlichen Kaufsignale</span></div>';
-  $('con').innerHTML = con.length ? con.map(item).join('') : '<div class="it"><span>Keine deutlichen Verkaufssignale</span></div>';
-  $('all').innerHTML = ['Lage', 'Markt', 'Wende', 'Zyklus'].map(g => `<tr><td colspan="3" style="color:var(--mut);font-weight:600">${g}</td></tr>` +
-    T.b.filter(x => x[1] === g).map(x => `<tr><td>${esc(x[0])}<br><span style="color:var(--mut);font-size:11px">${esc(x[4])}</span></td>
-     <td class="v">${esc(x[3])}</td><td class="v"><span class="mini"><i style="width:${x[2]}%;background:${color(x[2])}"></i></span> <b style="color:${color(x[2])}">${x[2]}</b></td></tr>`).join('')).join('');
+  indTable(T);
+}
+// Ungefährer Anteil jedes Indikators am Score: Lage + Markt bilden die Richtung (≈ 70 %, aufgeteilt nach dem
+// kalibrierten Markt-Anteil), die Wende die Bestätigung (≈ 20 %), der Bitcoin-Zyklus den Bonus (≈ 10 %).
+function weightShares(list){
+  const w = D.modes[mode].w, wm = D.cal.modes[mode].cfg.wm;
+  const gf = {Lage: 0.7 / (1 + wm), Markt: 0.7 * wm / (1 + wm), Wende: 0.2, Zyklus: 0.1}, gs = {}, out = {};
+  list.forEach(x => gs[x[1]] = (gs[x[1]] || 0) + (w[x[0]] ?? 1));
+  let tot = 0;
+  list.forEach(x => { const v = (gf[x[1]] || 0) * (w[x[0]] ?? 1) / (gs[x[1]] || 1); out[x[0]] = v; tot += v; });
+  Object.keys(out).forEach(k => out[k] = tot ? out[k] / tot * 100 : 0);
+  return out;
+}
+let isort = store('isort') || 'group';
+$('isort').addEventListener('click', e => { const b = e.target.closest('.chip'); if (!b) return; isort = b.dataset.s; store('isort', isort); if (cur && cur.data) indTable(cur.data.tf[ctf]); });
+function indTable(T){
+  if (!T || !T.b) return;
+  document.querySelectorAll('#isort .chip').forEach(b => b.classList.toggle('on', b.dataset.s === isort));
+  const G4 = ['Lage', 'Markt', 'Wende', 'Zyklus'], NAMES = {Lage: 'Lage', Markt: 'Markt', Wende: 'Wende', Zyklus: 'Bitcoin-Zyklus'};
+  const ws = weightShares(T.b), cnt = g => T.b.filter(x => x[1] === g).length;
+  $('allsum').textContent = `Alle Indikatoren (${T.b.length})`;
+  const head = `<tr class="ih"><th>Indikator</th><th class="v">Wert</th><th class="v">Gewicht</th><th class="v">Score</th></tr>`;
+  const row = x => `<tr><td>${esc(x[0])}${isort !== 'group' ? ` <small class="gtag">${NAMES[x[1]]}</small>` : ''}<br><span style="color:var(--mut);font-size:11px">${esc(x[4])}</span></td>
+     <td class="v">${esc(x[3])}</td><td class="v">${(ws[x[0]] || 0).toFixed(1).replace('.', ',')} %</td>
+     <td class="v"><span class="mini"><i style="width:${x[2]}%;background:${color(x[2])}"></i></span> <b style="color:${color(x[2])}">${x[2]}</b></td></tr>`;
+  let html = head;
+  if (isort === 'group') html += G4.filter(cnt).map(g => `<tr><td colspan="4" class="gh">${NAMES[g]} (${cnt(g)})
+      <span>${(T.b.filter(x => x[1] === g).reduce((a, x) => a + (ws[x[0]] || 0), 0)).toFixed(0)} %</span></td></tr>` + T.b.filter(x => x[1] === g).map(row).join('')).join('');
+  else html += [...T.b].sort((a, b) => isort === 'weight' ? (ws[b[0]] || 0) - (ws[a[0]] || 0) : b[2] - a[2]).map(row).join('');
+  $('all').innerHTML = html;
+  $('allnote').textContent = 'Gewicht = ungefährer Anteil am Score: Lage und Markt bilden die Richtung (zusammen etwa 70 %), die Wende die Bestätigung (etwa 20 %), der Bitcoin-Zyklus den Zusatz-Ausschlag (etwa 10 %); innerhalb jeder Gruppe nach den kalibrierten Gewichten verteilt. Score: 100 = spricht für Kaufen, 0 = für Verkaufen.';
 }
 
 // ---------------- Charts: Kurs, Score und gewählte Indikatoren untereinander
@@ -2322,7 +2352,7 @@ function draw(T, ind){
   const charts = [];
   list.forEach((p, i) => {
     const chart = L.createChart($('ch' + i), opt(i === list.length - 1));
-    let series, vals = null;
+    let series, vals = null, svals = null;
     if (p.kind === 'price') {
       series = chart.addCandlestickSeries({upColor: '#22c55e', downColor: '#ef4444', borderVisible: false,
         wickUpColor: '#22c55e', wickDownColor: '#ef4444', priceFormat: {type: 'price', precision: prec, minMove: Math.pow(10, -prec)}});
@@ -2352,12 +2382,23 @@ function draw(T, ind){
     } else {
       const src = ind.v[p.name];
       vals = T.c.map((k, j) => { const q = j - pre; return q >= 0 && q < src.length ? src[q] : null; });
+      const ssrc = ind.s && ind.s[p.name];
+      if (ssrc) {   // dazugehörige Score-Kurve (0–100) im Hintergrund, eigene unsichtbare Skala
+        svals = T.c.map((k, j) => { const q = j - pre; return q >= 0 && q < ssrc.length ? ssrc[q] : null; });
+        const ss = chart.addBaselineSeries({priceScaleId: 'sub', baseValue: {type: 'price', price: 50}, lineWidth: 1,
+          topLineColor: 'rgba(34,197,94,.9)', topFillColor1: 'rgba(34,197,94,.22)', topFillColor2: 'rgba(34,197,94,.02)',
+          bottomLineColor: 'rgba(239,68,68,.9)', bottomFillColor1: 'rgba(239,68,68,.02)', bottomFillColor2: 'rgba(239,68,68,.22)',
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          autoscaleInfoProvider: () => ({priceRange: {minValue: 0, maxValue: 100}})});
+        chart.priceScale('sub').applyOptions({visible: false, scaleMargins: {top: 0.06, bottom: 0.06}});
+        ss.setData(T.c.map((k, j) => svals[j] == null ? {time: k[0]} : {time: k[0], value: svals[j]}));
+      }
       series = chart.addLineSeries({color: '#a78bfa', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true,
         priceFormat: {type: 'custom', formatter: v => num(v), minMove: 0.0001}});
       series.setData(T.c.map((k, j) => vals[j] == null ? {time: k[0]} : {time: k[0], value: vals[j]}));
       (REF[p.name] || []).forEach(v => series.createPriceLine({price: v, color: '#4b5563', lineWidth: 1, lineStyle: 2, axisLabelVisible: false}));
     }
-    charts.push({kind: p.kind, name: p.name, chart, series, vals, i});
+    charts.push({kind: p.kind, name: p.name, chart, series, vals, svals, i});
   });
   G = {T, n, charts, pc: charts[0].chart, cs: charts[0].series};
   if (!view) view = {bars: Math.min(n, big() ? 150 : 120), to: n - 1 + 4};
@@ -2381,7 +2422,9 @@ function labels(i){
   if (!G) return;
   G.charts.forEach(c => { if (c.kind === 'price') return; const el = $('plab' + c.i); if (!el) return;
     const v = c.vals ? c.vals[Math.max(0, Math.min(G.n - 1, i))] : null;
-    el.innerHTML = (c.kind === 'score' ? `${zsel === 'g' ? 'Gesamt-Score' : 'Score ' + TFL[ctf]} · ${esc(D.modes[mode].label)}` : esc(c.name)) + ` <b>${c.kind === 'score' ? (v == null ? '–' : Math.round(v)) : num(v)}</b>`; });
+    const sv = c.svals ? c.svals[Math.max(0, Math.min(G.n - 1, i))] : null;
+    el.innerHTML = (c.kind === 'score' ? `${zsel === 'g' ? 'Gesamt-Score' : 'Score ' + TFL[ctf]} · ${esc(D.modes[mode].label)}` : esc(c.name)) + ` <b>${c.kind === 'score' ? (v == null ? '–' : Math.round(v)) : num(v)}</b>`
+      + (c.svals ? ` · Score <b style="color:${color(sv)}">${sv == null ? '–' : sv}</b>` : ''); });
 }
 
 // ---------------- Ansicht: Schieben und Zoomen auf der Zeitachse
